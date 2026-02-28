@@ -1,19 +1,23 @@
+import os
+import random
+
+import numpy as np
+import open3d as o3d
 import torch
 import torch.nn.functional as F
-import numpy as np
-import random
+
 from torch import Tensor
-import os
-import open3d as o3d
+
 
 def safe_state(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)        # Seed for current CUDA device
-    torch.cuda.manual_seed_all(seed)    # Seed for all CUDA devices
+    torch.cuda.manual_seed(seed)  # Seed for current CUDA device
+    torch.cuda.manual_seed_all(seed)  # Seed for all CUDA devices
     # torch.backends.cudnn.deterministic = True
     # torch.backends.cudnn.benchmark = False  # This can slow down training, but ensures reproducibility
+
 
 def setup_directories(result_dir):
     paths = {
@@ -22,34 +26,34 @@ def setup_directories(result_dir):
         "stats_dir_dynamic": f"{result_dir}/stats/dynamic",
         "render_dir_static": f"{result_dir}/renders/static",
         "render_dir_dynamic": f"{result_dir}/renders/dynamic",
-        "gt_videos_dir": f"{result_dir}/gt_videos"
-
+        "gt_videos_dir": f"{result_dir}/gt_videos",
     }
     for path in paths.values():
         os.makedirs(path, exist_ok=True)
     return paths
 
+
 def verify_optimizer_parameter_references(gaussians):
     """
     Verify that optimizers are tracking the correct parameter objects.
-    
+
     Args:
         optimizers: Dictionary of optimizers, keyed by parameter name
         parameter_dict: Dictionary of parameters, keyed by the same names
-    
+
     Returns:
         bool: True if all parameters are correctly tracked, False otherwise
     """
     all_correct = True
-    
+
     for name, optimizer in gaussians.optimizers.items():
         if name not in gaussians.splats:
             print(f"⚠️ Warning: Optimizer '{name}' exists but no matching parameter found")
             all_correct = False
-            
+
         param_in_optimizer = optimizer.param_groups[0]["params"][0]
         actual_param = gaussians.splats[name]
-        
+
         if id(param_in_optimizer) == id(actual_param):
             print(f"✓ Parameter '{name}' is correctly tracked")
         else:
@@ -58,6 +62,7 @@ def verify_optimizer_parameter_references(gaussians):
             print(f"  Actual parameter: {id(actual_param)}")
             all_correct = False
     assert all_correct
+
 
 class CameraOptModule(torch.nn.Module):
     """Camera pose optimization module."""
@@ -89,9 +94,7 @@ class CameraOptModule(torch.nn.Module):
         batch_shape = camtoworlds.shape[:-2]
         pose_deltas = self.embeds(embed_ids)  # (..., 9)
         dx, drot = pose_deltas[..., :3], pose_deltas[..., 3:]
-        rot = rotation_6d_to_matrix(
-            drot + self.identity.expand(*batch_shape, -1)
-        )  # (..., 3, 3)
+        rot = rotation_6d_to_matrix(drot + self.identity.expand(*batch_shape, -1))  # (..., 3, 3)
         transform = torch.eye(4, device=pose_deltas.device).repeat((*batch_shape, 1, 1))
         transform[..., :3, :3] = rot
         transform[..., :3, 3] = dx
@@ -115,9 +118,7 @@ class AppearanceOptModule(torch.nn.Module):
         self.sh_degree = sh_degree
         self.embeds = torch.nn.Embedding(n, embed_dim)
         layers = []
-        layers.append(
-            torch.nn.Linear(embed_dim + feature_dim + (sh_degree + 1) ** 2, mlp_width)
-        )
+        layers.append(torch.nn.Linear(embed_dim + feature_dim + (sh_degree + 1) ** 2, mlp_width))
         layers.append(torch.nn.ReLU(inplace=True))
         for _ in range(mlp_depth - 1):
             layers.append(torch.nn.Linear(mlp_width, mlp_width))
@@ -125,9 +126,7 @@ class AppearanceOptModule(torch.nn.Module):
         layers.append(torch.nn.Linear(mlp_width, 3))
         self.color_head = torch.nn.Sequential(*layers)
 
-    def forward(
-        self, features: Tensor, embed_ids: Tensor, dirs: Tensor, sh_degree: int
-    ) -> Tensor:
+    def forward(self, features: Tensor, embed_ids: Tensor, dirs: Tensor, sh_degree: int) -> Tensor:
         """Adjust appearance based on embeddings.
 
         Args:
@@ -163,6 +162,7 @@ class AppearanceOptModule(torch.nn.Module):
         colors = self.color_head(h)
         return colors
 
+
 def rotation_6d_to_matrix(d6: Tensor) -> Tensor:
     """
     Converts 6D rotation representation by Zhou et al. [1] to rotation matrix
@@ -186,7 +186,7 @@ def rotation_6d_to_matrix(d6: Tensor) -> Tensor:
     b3 = torch.cross(b1, b2, dim=-1)
     return torch.stack((b1, b2, b3), dim=-2)
 
-    
+
 def o3d_knn(pts, num_knn):
     indices = []
     sq_dists = []
@@ -200,10 +200,11 @@ def o3d_knn(pts, num_knn):
 
     return np.array(sq_dists), np.array(indices)
 
+
 def build_rotation(q):
     norm = torch.sqrt(q[:, 0] * q[:, 0] + q[:, 1] * q[:, 1] + q[:, 2] * q[:, 2] + q[:, 3] * q[:, 3])
     q = q / norm[:, None]
-    rot = torch.zeros((q.size(0), 3, 3), device='cuda')
+    rot = torch.zeros((q.size(0), 3, 3), device="cuda")
     r = q[:, 0]
     x = q[:, 1]
     y = q[:, 2]
@@ -219,8 +220,10 @@ def build_rotation(q):
     rot[:, 2, 2] = 1 - 2 * (x * x + y * y)
     return rot
 
+
 def norm_quat(q):
     return q / torch.norm(q, dim=-1, keepdim=True)
+
 
 def quat_mult(q1, q2):
     w1, x1, y1, z1 = q1.T
@@ -241,21 +244,21 @@ def quat_inv(q):
     q_inv[:, 1:] *= -1
     return q_inv
 
+
 def find_subsequence(tensor, subsequence):
     if len(subsequence) > len(tensor):
         return torch.tensor([])
 
     windows = tensor.unfold(0, len(subsequence), 1)
     all_indices = []
-    matches = torch.all(windows == subsequence, dim=1) #this will match across the length and be true at the location
+    matches = torch.all(windows == subsequence, dim=1)  # this will match across the length and be true at the location
     start_index = torch.where(matches)[0].item()
     offset = 0
     for i in range(len(subsequence)):
         all_indices.append(start_index + offset)
         offset += 1
-    
-    return torch.tensor(all_indices)
 
+    return torch.tensor(all_indices)
 
 
 def get_divisors(n):
@@ -264,6 +267,7 @@ def get_divisors(n):
     Returns a sorted list of divisors.
     """
     import math
+
     if n <= 0:
         return []
     divs = set()

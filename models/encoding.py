@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 def scale_anything(dat, inp_scale, tgt_scale):
     if inp_scale is None:
         inp_scale = [dat.min(), dat.max()]
-    
-    dat = (dat  - inp_scale[0]) / (inp_scale[1] - inp_scale[0])
+
+    dat = (dat - inp_scale[0]) / (inp_scale[1] - inp_scale[0])
     dat = dat * (tgt_scale[1] - tgt_scale[0]) + tgt_scale[0]
     return dat
 
@@ -16,12 +17,12 @@ def get_embedder(multires, i=1):
         return nn.Identity(), 3
 
     embed_kwargs = {
-        'include_input': True,
-        'input_dims': i,
-        'max_freq_log2': multires - 1,
-        'num_freqs': multires,
-        'log_sampling': True,
-        'periodic_fns': [torch.sin, torch.cos],
+        "include_input": True,
+        "input_dims": i,
+        "max_freq_log2": multires - 1,
+        "num_freqs": multires,
+        "log_sampling": True,
+        "periodic_fns": [torch.sin, torch.cos],
     }
 
     embedder_obj = Embedder(**embed_kwargs)
@@ -36,22 +37,22 @@ class Embedder:
 
     def create_embedding_fn(self):
         embed_fns = []
-        d = self.kwargs['input_dims']
+        d = self.kwargs["input_dims"]
         out_dim = 0
-        if self.kwargs['include_input']:
+        if self.kwargs["include_input"]:
             embed_fns.append(lambda x: x)
             out_dim += d
 
-        max_freq = self.kwargs['max_freq_log2']
-        N_freqs = self.kwargs['num_freqs']
+        max_freq = self.kwargs["max_freq_log2"]
+        N_freqs = self.kwargs["num_freqs"]
 
-        if self.kwargs['log_sampling']:
-            freq_bands = 2. ** torch.linspace(0., max_freq, steps=N_freqs)
+        if self.kwargs["log_sampling"]:
+            freq_bands = 2.0 ** torch.linspace(0.0, max_freq, steps=N_freqs)
         else:
-            freq_bands = torch.linspace(2. ** 0., 2. ** max_freq, steps=N_freqs)
+            freq_bands = torch.linspace(2.0**0.0, 2.0**max_freq, steps=N_freqs)
 
         for freq in freq_bands:
-            for p_fn in self.kwargs['periodic_fns']:
+            for p_fn in self.kwargs["periodic_fns"]:
                 embed_fns.append(lambda x, p_fn=p_fn, freq=freq: p_fn(x * freq))
                 out_dim += d
 
@@ -60,7 +61,6 @@ class Embedder:
 
     def embed(self, inputs):
         return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
-
 
 
 def skew(w: torch.Tensor) -> torch.Tensor:
@@ -75,9 +75,7 @@ def skew(w: torch.Tensor) -> torch.Tensor:
       W: (N, 3, 3) A skew matrix such that W @ v == w x v
     """
     zeros = torch.zeros(w.shape[0], device=w.device)
-    w_skew_list = [zeros, -w[:, 2], w[:, 1],
-                   w[:, 2], zeros, -w[:, 0],
-                   -w[:, 1], w[:, 0], zeros]
+    w_skew_list = [zeros, -w[:, 2], w[:, 1], w[:, 2], zeros, -w[:, 0], -w[:, 1], w[:, 0], zeros]
     w_skew = torch.stack(w_skew_list, dim=-1).reshape(-1, 3, 3)
     return w_skew
 
@@ -140,8 +138,9 @@ def exp_se3(S: torch.Tensor, theta: float) -> torch.Tensor:
     W_sqr = torch.bmm(W, W)
     theta = theta.view(-1, 1, 1)
 
-    p = torch.bmm((theta * identity + (1.0 - torch.cos(theta)) * W + (theta - torch.sin(theta)) * W_sqr),
-                  v.unsqueeze(-1))
+    p = torch.bmm(
+        (theta * identity + (1.0 - torch.cos(theta)) * W + (theta - torch.sin(theta)) * W_sqr), v.unsqueeze(-1)
+    )
     return rp_to_se3(R, p)
 
 

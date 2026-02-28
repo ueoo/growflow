@@ -24,13 +24,14 @@ class Config:
     # Name of compression strategy to use
     compression: Optional[Literal["png"]] = None
     # Render trajectory path
-    render_traj_path: str = "interp"
+    render_traj_path: str = "360"
     # Video duration in secs, consistent across all saved videos
     video_duration: int = 3
     time_normalize_factor: float = 1
+    # TODO: make this more explicit, like into a list or something.
+    half_normalize: bool = False
     # whether to include image at t=0
     include_zero: bool = False
-    include_end: bool = False
     upper_bound_exp: bool = (
         False  # when using upper_bound_exp, this gaussians from current timestep will depend on previous timestep.
     )
@@ -38,17 +39,13 @@ class Config:
     # ours is concatenate all params, ours2 is split architecture, ours3 is breaking time into segments, 4dgs is 4dgs, ours_hybrid is using hybrid representation
     version: Literal["ours", "4dgs"] = "ours"
     previous_init_params_path: str = ""
-    align_timesteps: bool = False  # whether to run ICP to align the timesteps.
-    dates: Optional[List[str]] = None
-    subsample_factor: int = 1  # subsampling the timesteps
-    start_from: int = 0  # where to start from, if 0 start from beginning, use positive integers
-    end_until: int = 0
 
     ## Neural ODE splatting config
     # Path to the dataset
-    data_dir: str = "./data/dynamic/captured/pi_rose"
+    # data_dir: str = "./data/dynamic/blender/360/multi-view/31_views/rose_transparent_final_small_vase_70_timesteps"
+    data_dir: str = "/scr/yuegao/Reconstruction_dataset_growflow/Rosemore50kfullTest_Rosemore_050016"
 
-    # whether to combine train and test
+    # whether to training and testing for static reconstruction.
     combine_train_test: bool = False
     # Whether or not the dataset is reversed or not, default to False since dataset is already flipped.
     is_reverse: bool = False
@@ -76,7 +73,7 @@ class Config:
     base: float = 1.2
     # number of iterations where we unlock all timesteps.
     num_train_all: int = 500
-    min_iterations_req: int = 500
+    min_iterations_req: int = 300
     scale_activation: str = "exp"
     # number of neighbors for rigid loss, 20 default val
     num_knn: int = 20
@@ -85,27 +82,30 @@ class Config:
 
     # Neural ODE & friends
     augment_dim: int = 0
-    hidden_dim: int = 256
-    hidden_depth: int = 8
+    hidden_dim: int = 64
+    hidden_depth: int = 3
     min_step_size: float = 1e-4  # min_step_size to prevent underflow in adaptive methods
     encoding: str = "hexplane"
     bbox_expansion: bool = False
     use_timenet: bool = True  # whether or not to use timenet for time encoding
     ours_multires: list[int] = field(default_factory=lambda: [1, 2])  # multi resolution of voxel grid
-    spatial_temp_resolution: list[int] = field(default_factory=lambda: [64, 64, 64, 150])
+    spatial_temp_resolution: list[int] = field(default_factory=lambda: [64, 64, 64, 25])
     non_linearity_name: str = (
         "relu"  # relu performs slightly better but is more prone to underflow when training for longer.
     )
-    feature_out_output_dim: int = 64  # the size of the feature mixer and the size of the mlp heads
-    unscaled_neural_ode_lr_init: float = 1.6e-4
+    feature_out_output_dim = 64  # the size of the feature mixer and the size of the mlp heads
+    unscaled_neural_ode_lr_init: float = 1.6e-4  # NOTE: only used with hexplane
     unscaled_encoder_lr_init: float = 1.6e-3
     gamma: float = 0.1
-    adjust_lr_w_scene: bool = False  # whether to adjust lr w.r.t scene
+    adjust_lr_w_scene: bool = False
     concat_remaining: bool = True  # whether or not to concatenate the remaining parameters
     method: str = "dopri5"
     rtol: float = 1.0e-4
     atol: float = 1.0e-5
+    rtol_train_all: float = 1.0e-4
+    atol_train_all: float = 1.0e-5
     adjoint: bool = True
+    adjoint_train_all: bool = True  # whether to use adjoint when doing train all
     learn_pos: bool = True  # learning position trajectory
     learn_quat: bool = True  # learning quaternion trajectory
     learn_scales: bool = True  # learning scale trajectory
@@ -120,10 +120,8 @@ class Config:
     reverse_scheduler: bool = False  # whether to reverse the scheduler for the neural ODE
     scheduler_train_all: bool = False  # apply scheduler train all
     load_optimizers: bool = True  # whether to load optimizers when resume training
-    use_skip: bool = False  # whether to use skip connections in my neural ODE
-    mixed_init_training: bool = (
-        True  # whether to train the representation using mixed initial conditionsm, TODO: remember to turn this back on
-    )
+    use_skip: bool = False
+    mixed_init_training: bool = True  # whether to train the representation using mixed initial conditions
     num_init_conditions: int = 1  # the number of initial conditions to use when doing mixed initial training
     full_trajectory_path: str = ""  # the path of the full trajectory
     image_supervision: bool = True  # default, using image supervision
@@ -131,25 +129,17 @@ class Config:
     reset_ode: bool = True  # whether to reset the neural ODE
     skip_static_eval: bool = True
     global_integration_interval: int = 50  # how often to do global integration
-    global_integration_start: int = 1000
+    global_integration_start: int = 5000  # when start global integration
     compute_tv_loss_ours: bool = False
     plane_tv_weight_ours: float = 0.0001  # TV loss of spatial grid
     time_smoothness_weight_ours: float = 0.01  # TV loss of temporal grid
     l1_time_planes_weight_ours: float = 0.0001  # TV loss of temporal grid
-    use_bounding_box: bool = True
-    use_mask_proj: bool = False
-    use_mask_intersection: bool = (
-        False  # False = union, true = intersection. NOTE: union will include more than the masked stuff
-    )
-    dilation_iters: int = 10
-    apply_mask: bool = True
-    use_own_impl: bool = True
-    learn_masks: bool = True
+    learn_masks: bool = False
     learn_masks_from: int = 3000
     masks_reg: float = 0.1
+    mask_threshold: float = 0.5  # the threshold of the mask that we use to select the foreground gaussians.
     cache_trajectory: bool = True
     cache_trajectory_split: bool = False
-    mask_threshold: float = 0.5  # the threshold of the mask that we use to select the foreground gaussians.
 
     # ingp configs default values
     ingp_otype: str = "HashGrid"
@@ -178,9 +168,7 @@ class Config:
     plane_tv_weight: float = 0.0001  # TV loss of spatial grid
     time_smoothness_weight: float = 0.01  # TV loss of temporal grid
     l1_time_planes_weight: float = 0.0001  # TV loss of temporal grid
-    multires: list[int] = field(
-        default_factory=lambda: [1, 2, 4, 8]
-    )  # multi resolution of voxel grid, note more multires than ours
+    multires: list[int] = field(default_factory=lambda: [1, 2, 4, 8])  # multi resolution of voxel grid
     no_dx: bool = False  # cancel the deformation of Gaussians' position
     no_grid: bool = False  # cancel the spatial-temporal hexplane.
     no_ds: bool = False  # cancel the deformation of Gaussians' scaling
@@ -194,13 +182,9 @@ class Config:
     ######################## 4dgs ###################################
 
     # Type of the dataset (e.g. COLMAP or Blender)
-    data_type: Literal["colmap", "blender"] = "colmap"
+    data_type: Literal["colmap", "blender"] = "blender"
     # Downsample factor for the dataset
-    data_factor: int = 1
-    debug_data_loading: bool = False  # if set to true, can use pdb to check each timestep's data
-    crop_imgs: bool = False  # NOTE: dont use this, messes up optimization, crop first
-    use_crops: bool = False  # the difference with above is you just use cropped images a priori
-    use_bg_masks: bool = True  # if using bg masks, u mask out like the plant + pot
+    data_factor: int = 4
     # Directory to save results
     result_dir: str = ""
     # Every N images there is a test image
@@ -217,7 +201,6 @@ class Config:
     downsample_eval: bool = True
     # image shape:
     target_shape: Tuple[int, int] = (400, 400)
-    use_dense: bool = False
 
     # Port for the viewer server
     port: int = 65432
@@ -227,7 +210,7 @@ class Config:
     debug2: bool = False
     # whether or not to debug for nan gradients
     debug_nan: bool = False
-    debug_every: int = 100
+    debug_every: int = 500
     # whether we want to plot a reference plot (like when are we only training a subset and we want to see the full trajectory)
     viz_reference: bool = False
     # # we can do debug mode 1, but without showing upper
@@ -263,19 +246,15 @@ class Config:
     dynamic_max_steps: int = 30_000
     # Steps to evaluate the model
     dynamic_eval_steps: List[int] = field(
-        default_factory=lambda: [1, 1000, 2000, 4000, 5000, 6000, 8000, 12000, 15_000, 30_000, 60_000, 80_000, 100_000]
+        default_factory=lambda: [15_000, 20_000, 25_000, 27_000, 30_000, 60_000, 80_000, 100_000]
     )
     # # Steps to save the model
     dynamic_save_steps: List[int] = field(
         default_factory=lambda: [
             1,
-            1000,
-            3000,
-            5000,
-            7000,
-            9000,
-            10_000,
             15_000,
+            20_000,
+            25_000,
             30_000,
             50_000,
             40_000,
@@ -291,12 +270,17 @@ class Config:
             270_000,
         ]
     )
+    # # Whether to save ply file (storage size can be large)
+    # save_ply: bool = False
+    # # Steps to save the model as ply
+    # ply_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
+    # Whether or not to run eval after training
     run_eval: bool = True
     # Resume dynamic training
     resume_dyn_training: bool = False
 
     # Initialization strategy
-    init_type: Literal["sfm", "random", "blender_pts"] = "sfm"  # use random for blender, sfm for captured
+    init_type: Literal["sfm", "random", "blender_pts"] = "random"  # use random for blender, sfm for captured
     # Initial number of GSs. Ignored if using sfm
     init_num_pts: int = 100_000
     # Initial extent of GSs as a multiple of the camera extent. Ignored if using sfm
@@ -316,10 +300,9 @@ class Config:
     num_vertices_sampled: int = 2500000
     # monotonic scale loss
     # masked loss
-    return_mask: bool = True
+    return_mask: bool = False
     use_masked_loss: bool = False
     use_masked_loss_v2: bool = False
-    viz_mask: bool = False  # use this to visualize the mask
 
     # Near plane clipping distance
     near_plane: float = 0.01
@@ -352,9 +335,7 @@ class Config:
     isometry_reg: float = 0.0  # default to 0.3
     local_isometry_reg: float = 0.0
     # Rigid regularization
-    rigid_reg: float = 0.0
-    # boundary supervision loss
-    param_loss_reg: float = 0.0
+    rigid_reg: float = 0.0  # default is 4
     # Monotonic scale regularization
     monotonic_lambda: float = 0.0  # default to 0.1
     # Gravity regularization
@@ -365,9 +346,11 @@ class Config:
     acceleration_reg: float = 0.0
     scale_acceleration_reg: float = 0.0
     scale_velocity_reg: float = 0.0
-    chamfer_reg: float = 0.0
+    chamfer_reg: float = 0.0  # set this default to 0.01
+    chamfer_reg_box: float = 0.0
     static_chamfer_reg: float = 0.0
     chamfer_num_points: int = 10_000
+    use_mesh_vertices: bool = True  # whether or not to use mesh vertices for chamfer calculation
 
     # Enable camera optimization.
     pose_opt: bool = False
@@ -399,7 +382,7 @@ class Config:
 
     # Logging
     # Use wandb
-    use_wandb: bool = True
+    use_wandb: bool = False
     # Dump information to wandb every this steps
     wandb_every: int = 100
     # Save training images to wandb
@@ -407,29 +390,27 @@ class Config:
 
     # Full eval settings, use for comparison against baselines
     track_path: str = ""
-    render_tracks: bool = False  # TODO: enable this later...
-    tracking_window: int = 35
-    render_white: bool = False
+    render_foreground: bool = True  # whether or not to render only the foreground gaussians
+    render_only_foreground: bool = False  # this will not even compose the bkgd
+    render_white: bool = False  # experimental
+    use_intersection: bool = True  # whether or not to use mask intersection
+    use_mask_projection: bool = False  # use mask projection to get foreground gaussians
+    use_bounding_box: bool = True
+    train_interp: bool = True
+    render_tracks: bool = True
+    tracking_window: int = 5
     skip_train: bool = True
     skip_test: bool = False
     animate_pc: bool = True
-    save_pc_imgs: bool = True
-    render_spacetime_viz: bool = False
-    render_demo_viz: bool = False
-    skip_pc: bool = False
     skip_4dgs: bool = False
     skip_4dgaussians: bool = False
     skip_dynamic3dgs: bool = False
     skip_upper_bound: bool = False
     skip_rendering: bool = False
-    interpolation_factor: int = 1  # set this > 1 if u want to interpolate frames
-    render_interpolation_frames: bool = False
+    compute_masked_psnr: bool = False
     task_name: str = "dense_supervision"
     existing_result_path: str = ""
-    flip_x: bool = True
-    flip_y: bool = False
-    flip_z: bool = True
-    use_mask_psnr: bool = True
+    metric_scene: str = ""
 
     def adjust_steps(self, factor: float):
         """

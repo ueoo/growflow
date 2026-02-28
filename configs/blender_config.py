@@ -1,20 +1,23 @@
 from dataclasses import dataclass, field
-from typing import Optional, Literal, List, Union, Tuple 
-from gsplat.strategy import DefaultStrategy, MCMCStrategy
+from typing import List, Literal, Optional, Tuple, Union
+
 import yaml
+
+from gsplat.strategy import DefaultStrategy, MCMCStrategy
 from typing_extensions import assert_never
+
 
 @dataclass
 class Config:
     # Disable viewer
-    disable_viewer: bool = True 
+    disable_viewer: bool = True
     # Path to the .pt files. If provide, it will skip training and run evaluation only.
     static_ckpt: Optional[List[str]] = None
-    #per timestep static
+    # per timestep static
     per_timestep_static_ckpt_dir: Optional[List[str]] = None
-    #per_segment_folder
+    # per_segment_folder
     per_segment_ckpt_dir: str = ""
-    # # Whether or not 
+    # # Whether or not
     # eval_static: bool = False
     # Path to the .pt files. If provide, it will skip training and run evaluation only.
     dynamic_ckpt: Optional[List[str]] = None
@@ -24,129 +27,136 @@ class Config:
     render_traj_path: str = "360"
     # Video duration in secs, consistent across all saved videos
     video_duration: int = 3
-    time_normalize_factor: float = 1 
+    time_normalize_factor: float = 1
     # TODO: make this more explicit, like into a list or something.
-    half_normalize: bool=False
-    #whether to include image at t=0 
-    include_zero: bool=False
-    upper_bound_exp: bool = False #when using upper_bound_exp, this gaussians from current timestep will depend on previous timestep.
-    per_time_upper_bound: Optional[int] = None #when using per_time_upper_bound, you're just training one gaussians.
-    #ours is concatenate all params, ours2 is split architecture, ours3 is breaking time into segments, 4dgs is 4dgs, ours_hybrid is using hybrid representation
-    version: Literal["ours","4dgs"] = "ours"
+    half_normalize: bool = False
+    # whether to include image at t=0
+    include_zero: bool = False
+    upper_bound_exp: bool = (
+        False  # when using upper_bound_exp, this gaussians from current timestep will depend on previous timestep.
+    )
+    per_time_upper_bound: Optional[int] = None  # when using per_time_upper_bound, you're just training one gaussians.
+    # ours is concatenate all params, ours2 is split architecture, ours3 is breaking time into segments, 4dgs is 4dgs, ours_hybrid is using hybrid representation
+    version: Literal["ours", "4dgs"] = "ours"
     previous_init_params_path: str = ""
-
 
     ## Neural ODE splatting config
     # Path to the dataset
     data_dir: str = "./data/dynamic/blender/360/multi-view/31_views/rose_transparent_final_small_vase_70_timesteps"
 
-    #whether to training and testing for static reconstruction.
-    combine_train_test: bool=False
-    #Whether or not the dataset is reversed or not, default to False since dataset is already flipped.
-    is_reverse: bool = False 
+    # whether to training and testing for static reconstruction.
+    combine_train_test: bool = False
+    # Whether or not the dataset is reversed or not, default to False since dataset is already flipped.
+    is_reverse: bool = False
     # training_time indices
-    train_time_index: list = field(default_factory=list) #NOTE: setting this as cmd line args doesn't work yet
+    train_time_index: list = field(default_factory=list)  # NOTE: setting this as cmd line args doesn't work yet
     # temporal batch_size for dynamic training
-    temp_batch_size: int = 1 
+    temp_batch_size: int = 1
     # camera batch size for dynamic training, if -1, use all cameras
     cam_batch_size: int = -1
-    #Temporal downsampling
-    downsample_factor: float = 1 #choose below 1, the code samples 1/downsample_factor
-    #shuffle training timesteps
-    shuffle_ind: bool=True
-    #Use progressive training
-    use_progressive_training: bool=False
+    # Temporal downsampling
+    downsample_factor: float = 1  # choose below 1, the code samples 1/downsample_factor
+    # shuffle training timesteps
+    shuffle_ind: bool = True
+    # Use progressive training
+    use_progressive_training: bool = False
     # This FREEZES earlier timesteps and trains specifically for later timesteps.
-    use_progressive_training_two:bool =False
-    # Progressive training intervals (only used if progressive_training is enabled) 
+    use_progressive_training_two: bool = False
+    # Progressive training intervals (only used if progressive_training is enabled)
     progressive_training_intervals: List[int] = field(default_factory=list)
     # Whether to use a batch size of 1 during progressive training. NOTE: setting it to False leads to OOM
-    progressive_batch_size: bool=True 
+    progressive_batch_size: bool = True
     # progressive_training options
     progressive_option: Literal["uniform", "linear", "non-linear", "d3dgs"] = "d3dgs"
     # Progressive training weighting
     base: float = 1.2
     # number of iterations where we unlock all timesteps.
-    num_train_all: int = 500 
-    min_iterations_req:int = 300
+    num_train_all: int = 500
+    min_iterations_req: int = 300
     scale_activation: str = "exp"
-    #number of neighbors for rigid loss, 20 default val
+    # number of neighbors for rigid loss, 20 default val
     num_knn: int = 20
     not_skip_encoder: bool = True
     not_skip_model: bool = True
-    
-    #Neural ODE & friends
+
+    # Neural ODE & friends
     augment_dim: int = 0
     hidden_dim: int = 64
     hidden_depth: int = 3
-    min_step_size: float = 1e-4 #min_step_size to prevent underflow in adaptive methods
+    min_step_size: float = 1e-4  # min_step_size to prevent underflow in adaptive methods
     encoding: str = "hexplane"
-    bbox_expansion:bool=False
-    use_timenet: bool=True #whether or not to use timenet for time encoding
-    ours_multires: list[int] = field(default_factory=lambda:[1, 2])  # multi resolution of voxel grid
-    spatial_temp_resolution :list[int] = field(default_factory=lambda:[64, 64, 64, 25])
-    non_linearity_name: str = "relu" #relu performs slightly better but is more prone to underflow when training for longer. 
-    feature_out_output_dim = 64 #the size of the feature mixer and the size of the mlp heads
-    unscaled_neural_ode_lr_init:float= 1.6e-4 #NOTE: only used with hexplane 
-    unscaled_encoder_lr_init: float =1.6e-3
-    gamma: float=0.1
+    bbox_expansion: bool = False
+    use_timenet: bool = True  # whether or not to use timenet for time encoding
+    ours_multires: list[int] = field(default_factory=lambda: [1, 2])  # multi resolution of voxel grid
+    spatial_temp_resolution: list[int] = field(default_factory=lambda: [64, 64, 64, 25])
+    non_linearity_name: str = (
+        "relu"  # relu performs slightly better but is more prone to underflow when training for longer.
+    )
+    feature_out_output_dim = 64  # the size of the feature mixer and the size of the mlp heads
+    unscaled_neural_ode_lr_init: float = 1.6e-4  # NOTE: only used with hexplane
+    unscaled_encoder_lr_init: float = 1.6e-3
+    gamma: float = 0.1
     adjust_lr_w_scene: bool = False
-    concat_remaining:bool= True #whether or not to concatenate the remaining parameters
-    method: str="dopri5"
-    rtol: float = 1.e-4
-    atol: float = 1.e-5
-    rtol_train_all: float = 1.e-4
-    atol_train_all: float = 1.e-5
-    adjoint: bool = True 
-    adjoint_train_all: bool=True #whether to use adjoint when doing train all
-    learn_pos: bool =True #learning position trajectory
-    learn_quat: bool=True #learning quaternion trajectory
-    learn_scales: bool=True #learning scale trajectory
-    learn_shs: bool=False #learning colors trajectory
-    learn_opacities: bool=False #learning opacity trajectory
-    use_tanh_act:bool=False #whether to use tanh activation
-    resnet_init:bool=False
-    encode_other:bool=True #whether to encode other parameters
-    x_multires: int=6
-    time_conditioned: bool=False #whether to use frequency encoding for time.
-    reset_adam: bool =True #whether to reset adam states when ur adding a new timestep
-    reverse_scheduler: bool =False #whether to reverse the scheduler for the neural ODE
-    scheduler_train_all:bool = False #apply scheduler train all
-    load_optimizers:bool = True #whether to load optimizers when resume training
-    use_skip:bool = False
-    mixed_init_training:bool =True #whether to train the representation using mixed initial conditions
-    num_init_conditions:int = 1 #the number of initial conditions to use when doing mixed initial training
-    full_trajectory_path: str="" #the path of the full trajectory
-    image_supervision: bool = True #default, using image supervision
-    geometry_supervision: bool = False #supervising on the geometry (pseudo gt trajectory)
-    reset_ode: bool=True #whether to reset the neural ODE
-    skip_static_eval:bool =True
-    global_integration_interval: int = 50 #how often to do global integration
-    global_integration_start:int = 5000 #when start global integration
-    compute_tv_loss_ours:bool =False 
+    concat_remaining: bool = True  # whether or not to concatenate the remaining parameters
+    method: str = "dopri5"
+    rtol: float = 1.0e-4
+    atol: float = 1.0e-5
+    rtol_train_all: float = 1.0e-4
+    atol_train_all: float = 1.0e-5
+    adjoint: bool = True
+    adjoint_train_all: bool = True  # whether to use adjoint when doing train all
+    learn_pos: bool = True  # learning position trajectory
+    learn_quat: bool = True  # learning quaternion trajectory
+    learn_scales: bool = True  # learning scale trajectory
+    learn_shs: bool = False  # learning colors trajectory
+    learn_opacities: bool = False  # learning opacity trajectory
+    use_tanh_act: bool = False  # whether to use tanh activation
+    resnet_init: bool = False
+    encode_other: bool = True  # whether to encode other parameters
+    x_multires: int = 6
+    time_conditioned: bool = False  # whether to use frequency encoding for time.
+    reset_adam: bool = True  # whether to reset adam states when ur adding a new timestep
+    reverse_scheduler: bool = False  # whether to reverse the scheduler for the neural ODE
+    scheduler_train_all: bool = False  # apply scheduler train all
+    load_optimizers: bool = True  # whether to load optimizers when resume training
+    use_skip: bool = False
+    mixed_init_training: bool = True  # whether to train the representation using mixed initial conditions
+    num_init_conditions: int = 1  # the number of initial conditions to use when doing mixed initial training
+    full_trajectory_path: str = ""  # the path of the full trajectory
+    image_supervision: bool = True  # default, using image supervision
+    geometry_supervision: bool = False  # supervising on the geometry (pseudo gt trajectory)
+    reset_ode: bool = True  # whether to reset the neural ODE
+    skip_static_eval: bool = True
+    global_integration_interval: int = 50  # how often to do global integration
+    global_integration_start: int = 5000  # when start global integration
+    compute_tv_loss_ours: bool = False
     plane_tv_weight_ours: float = 0.0001  # TV loss of spatial grid
     time_smoothness_weight_ours: float = 0.01  # TV loss of temporal grid
     l1_time_planes_weight_ours: float = 0.0001  # TV loss of temporal grid
-    learn_masks:bool = False
-    learn_masks_from: int=3000
-    masks_reg: float=0.1
-    mask_threshold: float=0.5 #the threshold of the mask that we use to select the foreground gaussians.
-    cache_trajectory :bool =True
-    cache_trajectory_split: bool =False
+    learn_masks: bool = False
+    learn_masks_from: int = 3000
+    masks_reg: float = 0.1
+    mask_threshold: float = 0.5  # the threshold of the mask that we use to select the foreground gaussians.
+    cache_trajectory: bool = True
+    cache_trajectory_split: bool = False
 
-    #ingp configs default values
+    # ingp configs default values
     ingp_otype: str = "HashGrid"
     ingp_n_levels: int = 16
-    ingp_n_feat_per_lvl: int=2
-    ingp_log2_hashmap_size: int=15
-    ingp_base_resolution:int=16
-    ingp_per_level_scale:int=1.5
- 
+    ingp_n_feat_per_lvl: int = 2
+    ingp_log2_hashmap_size: int = 15
+    ingp_base_resolution: int = 16
+    ingp_per_level_scale: int = 1.5
+
     ######################## 4dgs ###################################
-    #TODO: only using this when using 4dgs model
-    net_width: int = 64  # width of deformation MLP, larger will increase the rendering quality and decrease the training/rendering speed.
+    # TODO: only using this when using 4dgs model
+    net_width: int = (
+        64  # width of deformation MLP, larger will increase the rendering quality and decrease the training/rendering speed.
+    )
     timebase_pe: int = 4  # useless
-    defor_depth: int = 1  # depth of deformation MLP, larger will increase the rendering quality and decrease the training/rendering speed.
+    defor_depth: int = (
+        1  # depth of deformation MLP, larger will increase the rendering quality and decrease the training/rendering speed.
+    )
     posebase_pe: int = 10  # useless
     scale_rotation_pe: int = 2  # useless
     opacity_pe: int = 2  # useless
@@ -157,7 +167,7 @@ class Config:
     plane_tv_weight: float = 0.0001  # TV loss of spatial grid
     time_smoothness_weight: float = 0.01  # TV loss of temporal grid
     l1_time_planes_weight: float = 0.0001  # TV loss of temporal grid
-    multires: list[int] = field(default_factory=lambda:[1, 2, 4, 8])  # multi resolution of voxel grid
+    multires: list[int] = field(default_factory=lambda: [1, 2, 4, 8])  # multi resolution of voxel grid
     no_dx: bool = False  # cancel the deformation of Gaussians' position
     no_grid: bool = False  # cancel the spatial-temporal hexplane.
     no_ds: bool = False  # cancel the deformation of Gaussians' scaling
@@ -189,38 +199,40 @@ class Config:
     # Whether to downsample time for eval (allows us to visualize interpolation)
     downsample_eval: bool = True
     # image shape:
-    target_shape: Tuple[int, int] = (400,400)
+    target_shape: Tuple[int, int] = (400, 400)
 
     # Port for the viewer server
-    port: int = 65432 
+    port: int = 65432
     # whether to be in debug mode 1, debug mode 1 just visualizes psnr over time compared to upper bound
-    debug: bool = True 
+    debug: bool = True
     # whether to be in debug mode 2, debug mode 2 allows u to train a particular timestep to understand per-time deformation.
     debug2: bool = False
     # whether or not to debug for nan gradients
-    debug_nan:bool =False
-    debug_every:int = 500
-    #whether we want to plot a reference plot (like when are we only training a subset and we want to see the full trajectory)
+    debug_nan: bool = False
+    debug_every: int = 500
+    # whether we want to plot a reference plot (like when are we only training a subset and we want to see the full trajectory)
     viz_reference: bool = False
     # # we can do debug mode 1, but without showing upper
     # debug_no_upper: bool = False
-    #whether to debug eval
-    debug_eval:bool=False
-    
+    # whether to debug eval
+    debug_eval: bool = False
+
     # Batch size for static training. Learning rates are scaled automatically
     batch_size: int = 1
     # A global factor to scale the number of training steps
     steps_scaler: float = 1.0
-    # Whether to load from config 
+    # Whether to load from config
     load_from_cfg: str = ""
     # Test folder, only used in metrics
-    test_folder: str =  ""
+    test_folder: str = ""
 
-    ## Static training 
+    ## Static training
     # Number of training steps
-    static_max_steps: int = 30_000 
+    static_max_steps: int = 30_000
     # Steps to evaluate the model
-    static_eval_steps: List[int] = field(default_factory=lambda: [1, 3_500, 7_000, 15_000, 23_000, 30_000, 50_000, 70_000, 90_000, 100_000])
+    static_eval_steps: List[int] = field(
+        default_factory=lambda: [1, 3_500, 7_000, 15_000, 23_000, 30_000, 50_000, 70_000, 90_000, 100_000]
+    )
     # Steps to save the model
     static_save_steps: List[int] = field(default_factory=lambda: [1, 7_000, 30_000, 100_000])
     # Whether to save ply file (storage size can be large)
@@ -228,13 +240,35 @@ class Config:
     # Steps to save the model as ply
     static_ply_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
 
-    ## Dynamic training 
+    ## Dynamic training
     # Number of training steps
-    dynamic_max_steps: int = 30_000 
+    dynamic_max_steps: int = 30_000
     # Steps to evaluate the model
-    dynamic_eval_steps: List[int] = field(default_factory=lambda: [15_000, 20_000, 25_000, 27_000, 30_000, 60_000, 80_000, 100_000])
+    dynamic_eval_steps: List[int] = field(
+        default_factory=lambda: [15_000, 20_000, 25_000, 27_000, 30_000, 60_000, 80_000, 100_000]
+    )
     # # Steps to save the model
-    dynamic_save_steps: List[int] = field(default_factory=lambda: [1, 15_000, 20_000, 25_000, 30_000, 50_000, 40_000, 60_000, 80_000, 100_000, 120_000, 140_000, 160_000, 180_000, 200_000, 250_000, 270_000])
+    dynamic_save_steps: List[int] = field(
+        default_factory=lambda: [
+            1,
+            15_000,
+            20_000,
+            25_000,
+            30_000,
+            50_000,
+            40_000,
+            60_000,
+            80_000,
+            100_000,
+            120_000,
+            140_000,
+            160_000,
+            180_000,
+            200_000,
+            250_000,
+            270_000,
+        ]
+    )
     # # Whether to save ply file (storage size can be large)
     # save_ply: bool = False
     # # Steps to save the model as ply
@@ -242,12 +276,12 @@ class Config:
     # Whether or not to run eval after training
     run_eval: bool = True
     # Resume dynamic training
-    resume_dyn_training: bool =False
+    resume_dyn_training: bool = False
 
     # Initialization strategy
-    init_type: Literal["sfm", "random", "blender_pts"] = "blender_pts" #use random for blender, sfm for captured
+    init_type: Literal["sfm", "random", "blender_pts"] = "random"  # use random for blender, sfm for captured
     # Initial number of GSs. Ignored if using sfm
-    init_num_pts: int = 100_000 
+    init_num_pts: int = 100_000
     # Initial extent of GSs as a multiple of the camera extent. Ignored if using sfm
     init_extent: float = 0.5
     # Degree of spherical harmonics
@@ -263,21 +297,19 @@ class Config:
     # Number of vertices to sample on gt mesh, independent on number of vertices. The number of sampled vertices
     # need not be equal to the number of gaussian means.
     num_vertices_sampled: int = 2500000
-    #monotonic scale loss
-    #masked loss
-    return_mask:bool =False
-    use_masked_loss: bool = False 
-    use_masked_loss_v2: bool=False 
-    
+    # monotonic scale loss
+    # masked loss
+    return_mask: bool = False
+    use_masked_loss: bool = False
+    use_masked_loss_v2: bool = False
+
     # Near plane clipping distance
     near_plane: float = 0.01
     # Far plane clipping distance
     far_plane: float = 1e10
 
     # Strategy for GS densification
-    strategy: Union[DefaultStrategy, MCMCStrategy] = field(
-        default_factory=DefaultStrategy
-    )
+    strategy: Union[DefaultStrategy, MCMCStrategy] = field(default_factory=DefaultStrategy)
     # Use packed mode for rasterization, this leads to less memory usage but slightly slower.
     packed: bool = False
     # Use sparse gradients for optimization. (experimental)
@@ -289,8 +321,8 @@ class Config:
     # Use absgrad for pruning/splitting
     use_absgrad: bool = False
 
-    # Use random background for training to encourage alpha consistency w/ source (helps with white floaters on image) 
-    random_bkgd: bool = False 
+    # Use random background for training to encourage alpha consistency w/ source (helps with white floaters on image)
+    random_bkgd: bool = False
     # Fixed background color to use w/ transparent source images for evaluation (and training if random_bkgd is False)
     bkgd_color: List[int] = field(default_factory=lambda: [0, 0, 0])
 
@@ -298,26 +330,26 @@ class Config:
     opacity_reg: float = 0.0
     # Scale regularization
     scale_reg: float = 0.0
-    # Isometry regularization 
-    isometry_reg: float = 0.0 #default to 0.3
-    local_isometry_reg: float=0.0
-    #Rigid regularization
-    rigid_reg: float = 0.0 #default is 4
-    #Monotonic scale regularization
-    monotonic_lambda: float = 0.0 #default to 0.1
-    #Gravity regularization
-    gravity_reg: float=0.0
-    #Boundary conditions regularization
-    boundary_condition_reg:float =0.0
-    velocity_reg:float=0.0
-    acceleration_reg:float=0.0
-    scale_acceleration_reg:float=0.0
-    scale_velocity_reg:float=0.0
-    chamfer_reg:float = 0.0 #set this default to 0.01
-    chamfer_reg_box:float = 0.0
-    static_chamfer_reg:float = 0.0
-    chamfer_num_points:int = 10_000
-    use_mesh_vertices:bool = True #whether or not to use mesh vertices for chamfer calculation
+    # Isometry regularization
+    isometry_reg: float = 0.0  # default to 0.3
+    local_isometry_reg: float = 0.0
+    # Rigid regularization
+    rigid_reg: float = 0.0  # default is 4
+    # Monotonic scale regularization
+    monotonic_lambda: float = 0.0  # default to 0.1
+    # Gravity regularization
+    gravity_reg: float = 0.0
+    # Boundary conditions regularization
+    boundary_condition_reg: float = 0.0
+    velocity_reg: float = 0.0
+    acceleration_reg: float = 0.0
+    scale_acceleration_reg: float = 0.0
+    scale_velocity_reg: float = 0.0
+    chamfer_reg: float = 0.0  # set this default to 0.01
+    chamfer_reg_box: float = 0.0
+    static_chamfer_reg: float = 0.0
+    chamfer_num_points: int = 10_000
+    use_mesh_vertices: bool = True  # whether or not to use mesh vertices for chamfer calculation
 
     # Enable camera optimization.
     pose_opt: bool = False
@@ -347,38 +379,38 @@ class Config:
     # Weight for depth loss
     depth_lambda: float = 1e-2
 
-    #Logging
-    #Use wandb
+    # Logging
+    # Use wandb
     use_wandb: bool = False
     # Dump information to wandb every this steps
     wandb_every: int = 100
     # Save training images to wandb
     wandb_save_image: bool = False
 
-    
-    #Full eval settings, use for comparison against baselines
-    track_path: str =""
-    render_foreground: bool=True #whether or not to render only the foreground gaussians
-    render_only_foreground: bool=False #this will not even compose the bkgd
-    render_white: bool=False #experimental
-    use_intersection: bool=True #whether or not to use mask intersection
-    use_mask_projection: bool =False #use mask projection to get foreground gaussians 
-    use_bounding_box: bool=True
-    train_interp:bool=True
-    render_tracks: bool =True
-    tracking_window: int=5
+    # Full eval settings, use for comparison against baselines
+    track_path: str = ""
+    render_foreground: bool = True  # whether or not to render only the foreground gaussians
+    render_only_foreground: bool = False  # this will not even compose the bkgd
+    render_white: bool = False  # experimental
+    use_intersection: bool = True  # whether or not to use mask intersection
+    use_mask_projection: bool = False  # use mask projection to get foreground gaussians
+    use_bounding_box: bool = True
+    train_interp: bool = True
+    render_tracks: bool = True
+    tracking_window: int = 5
     skip_train: bool = True
-    skip_test: bool = False 
-    animate_pc:bool =True
-    skip_4dgs: bool =False
-    skip_4dgaussians: bool=False
-    skip_dynamic3dgs: bool=False
-    skip_upper_bound: bool=False
-    skip_rendering: bool=False
-    compute_masked_psnr: bool=False
-    task_name: str = "dense_supervision" 
+    skip_test: bool = False
+    animate_pc: bool = True
+    skip_4dgs: bool = False
+    skip_4dgaussians: bool = False
+    skip_dynamic3dgs: bool = False
+    skip_upper_bound: bool = False
+    skip_rendering: bool = False
+    compute_masked_psnr: bool = False
+    task_name: str = "dense_supervision"
     existing_result_path: str = ""
-    metric_scene:str=""
+    metric_scene: str = ""
+
     def adjust_steps(self, factor: float):
         """
         Adjust all steps (eval, saving, gaussians pruning) based on a multiplicative factor

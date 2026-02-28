@@ -41,38 +41,39 @@ def average_pose(poses: np.ndarray) -> np.ndarray:
     return cam2world
 
 
-def generate_360_path(num_timesteps:int):
+def generate_360_path(num_timesteps: int):
     """
     Generate a 360 degree rendering of c2w poses, taken from TineuVox
     https://github.com/hustvl/TiNeuVox/blob/main/lib/load_dnerf.py
     """
-    trans_t = lambda t : torch.Tensor([  # noqa: E731
-    [1,0,0,0],
-    [0,1,0,0],
-    [0,0,1,t],
-    [0,0,0,1]]).float()
+    trans_t = lambda t: torch.Tensor([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, t], [0, 0, 0, 1]]).float()  # noqa: E731
 
-    rot_phi = lambda phi : torch.Tensor([  # noqa: E731
-        [1,0,0,0],
-        [0,np.cos(phi),-np.sin(phi),0],
-        [0,np.sin(phi), np.cos(phi),0],
-        [0,0,0,1]]).float()
+    rot_phi = lambda phi: torch.Tensor(
+        [[1, 0, 0, 0], [0, np.cos(phi), -np.sin(phi), 0], [0, np.sin(phi), np.cos(phi), 0], [0, 0, 0, 1]]  # noqa: E731
+    ).float()
 
-    rot_theta = lambda th : torch.Tensor([  # noqa: E731, F821
-        [np.cos(th),0,-np.sin(th),0],
-        [0,1,0,0],
-        [np.sin(th),0, np.cos(th),0],
-        [0,0,0,1]]).float()
+    rot_theta = lambda th: torch.Tensor(
+        [  # noqa: E731, F821
+            [np.cos(th), 0, -np.sin(th), 0],
+            [0, 1, 0, 0],
+            [np.sin(th), 0, np.cos(th), 0],
+            [0, 0, 0, 1],
+        ]
+    ).float()
 
     def pose_spherical(theta, phi, radius):
         c2w = trans_t(radius)
-        c2w = rot_phi(phi/180.*np.pi) @ c2w
-        c2w = rot_theta(theta/180.*np.pi) @ c2w
-        c2w = torch.Tensor(np.array([[-1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]])) @ c2w
+        c2w = rot_phi(phi / 180.0 * np.pi) @ c2w
+        c2w = rot_theta(theta / 180.0 * np.pi) @ c2w
+        c2w = torch.Tensor(np.array([[-1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])) @ c2w
         return c2w
-    render_poses = torch.stack([pose_spherical(angle, -30.0, 4.0) for angle in np.linspace(-180,180,num_timesteps+1)[:-1]], 0)
-    render_poses[..., 0:3, 1:3] *= -1 #flip sign for y and z
+
+    render_poses = torch.stack(
+        [pose_spherical(angle, -30.0, 4.0) for angle in np.linspace(-180, 180, num_timesteps + 1)[:-1]], 0
+    )
+    render_poses[..., 0:3, 1:3] *= -1  # flip sign for y and z
     return render_poses
+
 
 def generate_spiral_path(
     poses,
@@ -143,12 +144,7 @@ def generate_ellipse_path_z(
             [
                 low[0] + (high - low)[0] * (np.cos(theta) * 0.5 + 0.5),
                 low[1] + (high - low)[1] * (np.sin(theta) * 0.5 + 0.5),
-                variation
-                * (
-                    z_low[2]
-                    + (z_high - z_low)[2]
-                    * (np.cos(theta + 2 * np.pi * phase) * 0.5 + 0.5)
-                )
+                variation * (z_low[2] + (z_high - z_low)[2] * (np.cos(theta + 2 * np.pi * phase) * 0.5 + 0.5))
                 + height,
             ],
             -1,
@@ -204,12 +200,7 @@ def generate_ellipse_path_y(
         return np.stack(
             [
                 low[0] + (high - low)[0] * (np.cos(theta) * 0.5 + 0.5),
-                variation
-                * (
-                    y_low[1]
-                    + (y_high - y_low)[1]
-                    * (np.cos(theta + 2 * np.pi * phase) * 0.5 + 0.5)
-                )
+                variation * (y_low[1] + (y_high - y_low)[1] * (np.cos(theta + 2 * np.pi * phase) * 0.5 + 0.5))
                 + height,
                 low[2] + (high - low)[2] * (np.sin(theta) * 0.5 + 0.5),
             ],
@@ -282,7 +273,5 @@ def generate_interpolated_path(
         return new_points
 
     points = poses_to_points(poses, dist=rot_weight)
-    new_points = interp(
-        points, n_interp * (points.shape[0] - 1), k=spline_degree, s=smoothness
-    )
+    new_points = interp(points, n_interp * (points.shape[0] - 1), k=spline_degree, s=smoothness)
     return points_to_poses(new_points)

@@ -1,15 +1,19 @@
-import torch
-from torch import nn 
-from torch import Tensor
 import math
+
+from copy import deepcopy
+from typing import Dict, Optional, Tuple
+
 import matplotlib.pyplot as plt
-from helpers.gsplat_utils import create_splats_with_optimizers
-from gsplat import rasterization 
+import torch
+
+from gsplat import rasterization
+from gsplat.cuda._wrapper import spherical_harmonics
+
 # from gsplat import _rasterization as rasterization #use this pytorch version to understand code
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
-from gsplat.cuda._wrapper import spherical_harmonics
-from typing import Optional, Tuple, Dict
-from copy import deepcopy
+from torch import Tensor, nn
+
+from helpers.gsplat_utils import create_splats_with_optimizers
 
 
 class Gaussians(nn.Module):
@@ -21,10 +25,10 @@ class Gaussians(nn.Module):
     def __init__(
         self,
         parser,
-        first_mesh_path, #this is only used in blender_pts init
+        first_mesh_path,  # this is only used in blender_pts init
         init_type="sfm",
         app_opt=False,
-        packed=False, #NOTE: important to set this to false
+        packed=False,  # NOTE: important to set this to false
         antialiased=False,
         init_num_pts=100_000,
         init_extent=3.0,
@@ -40,7 +44,7 @@ class Gaussians(nn.Module):
         deformed_params_list=None,
         scale_activation="exp",
         device="cuda",
-        learn_mask=False
+        learn_mask=False,
     ):
 
         super(Gaussians, self).__init__()
@@ -65,65 +69,74 @@ class Gaussians(nn.Module):
         self.scale_activation = scale_activation
         assert self.scale_activation in ["exp", "softplus"], "scale activation must be one of exp or softplus"
         print(f"using {scale_activation}")
-        self.deformed_params_list = deformed_params_list if deformed_params_list is not None else ["means", "scales", "quats"]
+        self.deformed_params_list = (
+            deformed_params_list if deformed_params_list is not None else ["means", "scales", "quats"]
+        )
         self.learn_mask = learn_mask
-        
-        #deformed_params_dict is static after initialization
-        self.splats, self.optimizers, self.param_feature_dim, self.deformed_params_dict = create_splats_with_optimizers(
-                    parser=self.parser,
-                    first_mesh_path=self.first_mesh_path,
-                    init_type=self.init_type,
-                    init_num_pts=self.init_num_pts,
-                    init_extent=self.init_extent,
-                    init_opacity=self.init_opacity,
-                    init_scale=self.init_scale,
-                    scene_scale=self.scene_scale,
-                    sh_degree=self.sh_degree,
-                    sparse_grad=self.sparse_grad,
-                    visible_adam=self.visible_adam,
-                    batch_size=self.batch_size,
-                    feature_dim=self.feature_dim,
-                    deformed_params_list=self.deformed_params_list,
-                    device=self.device,
-                    learn_mask=self.learn_mask
-                )
 
+        # deformed_params_dict is static after initialization
+        self.splats, self.optimizers, self.param_feature_dim, self.deformed_params_dict = (
+            create_splats_with_optimizers(
+                parser=self.parser,
+                first_mesh_path=self.first_mesh_path,
+                init_type=self.init_type,
+                init_num_pts=self.init_num_pts,
+                init_extent=self.init_extent,
+                init_opacity=self.init_opacity,
+                init_scale=self.init_scale,
+                scene_scale=self.scene_scale,
+                sh_degree=self.sh_degree,
+                sparse_grad=self.sparse_grad,
+                visible_adam=self.visible_adam,
+                batch_size=self.batch_size,
+                feature_dim=self.feature_dim,
+                deformed_params_list=self.deformed_params_list,
+                device=self.device,
+                learn_mask=self.learn_mask,
+            )
+        )
 
     def activate_params(self, raster_params):
         """
         Activate the parameters in raster_params and return an updated raster_params
-        -Apply sigmoid to opacities 
+        -Apply sigmoid to opacities
         -Exp the scales
         -And invert camtoworlds
         -No need to normalize quaternions
         -For the spherical harmonics, reshape them from (N, 48) -> (N, 16, 3) and rename the key to colors
         """
-        need_activate_params = ["opacities", "scales", "viewmats", "shs"] #shs only appears if we are learning it
+        need_activate_params = ["opacities", "scales", "viewmats", "shs"]  # shs only appears if we are learning it
 
-        new_params = {k:v for k,v in raster_params.items() if k not in need_activate_params} #those that do not need activation
-        N = self.splats.means.shape[0] 
+        new_params = {
+            k: v for k, v in raster_params.items() if k not in need_activate_params
+        }  # those that do not need activation
+        N = self.splats.means.shape[0]
         # Then add activated parameters
-        new_params.update({
-            "opacities": torch.sigmoid(raster_params["opacities"]),
-            "scales": torch.exp(raster_params["scales"]) if self.scale_activation=="exp" else torch.nn.Softplus()(raster_params["scales"]),
-            "viewmats": torch.linalg.inv(raster_params["viewmats"]),
-        })
+        new_params.update(
+            {
+                "opacities": torch.sigmoid(raster_params["opacities"]),
+                "scales": (
+                    torch.exp(raster_params["scales"])
+                    if self.scale_activation == "exp"
+                    else torch.nn.Softplus()(raster_params["scales"])
+                ),
+                "viewmats": torch.linalg.inv(raster_params["viewmats"]),
+            }
+        )
 
-        if "colors" not in new_params: #this occurs if we are learning color traj, since raster_params would have shs as key
-            new_params.update({
-                "colors": raster_params["shs"].reshape(N, -1, 3)
-            })
-        
+        if (
+            "colors" not in new_params
+        ):  # this occurs if we are learning color traj, since raster_params would have shs as key
+            new_params.update({"colors": raster_params["shs"].reshape(N, -1, 3)})
+
         return new_params
-
 
     def freeze_splats(self):
         """
         Freeze the splats for dynamic training.
         """
-        for k,v in self.splats.items():
+        for k, v in self.splats.items():
             v.requires_grad = False
-
 
     def rasterize_splats_custom(
         self,
@@ -137,7 +150,7 @@ class Gaussians(nn.Module):
         mask out gaussians. Also assume these parameters are pre-activated
         Assume scene is 400, 400, sh degree is 3 and near/far planes are 2 and 6
         """
-        scales = torch.exp(scales) if self.scale_activation=="exp" else torch.nn.Softplus()(scales) # [N, 3]
+        scales = torch.exp(scales) if self.scale_activation == "exp" else torch.nn.Softplus()(scales)  # [N, 3]
         opacities = torch.sigmoid(raster_params["opacities"])  # [N,]
         rasterize_mode = "antialiased" if self.antialiased else "classic"
         render_colors, render_alphas, info = rasterization(
@@ -151,17 +164,15 @@ class Gaussians(nn.Module):
             width=400,
             height=400,
             packed=self.packed,
-            absgrad=( #TODO: try setting this to true, could be helpful for floaters
-                self.strategy.absgrad
-                if isinstance(self.strategy, DefaultStrategy)
-                else False
+            absgrad=(  # TODO: try setting this to true, could be helpful for floaters
+                self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False
             ),
             sparse_grad=self.sparse_grad,
             rasterize_mode=rasterize_mode,
             camera_model=self.camera_model,
-            sh_degree = 3,
-            near_plane = 2.0,
-            far_plane = 6.0
+            sh_degree=3,
+            near_plane=2.0,
+            far_plane=6.0,
         )
         masks = None
         if masks is not None:
@@ -169,7 +180,7 @@ class Gaussians(nn.Module):
 
         C = 1
         sh_degree = 3
-        camtoworlds=torch.linalg.inv(raster_params["viewmats"])  # [C, 4, 4]
+        camtoworlds = torch.linalg.inv(raster_params["viewmats"])  # [C, 4, 4]
         colors = raster_params["colors"]
         dirs = means[None, :, :] - camtoworlds[:, None, :3, 3]  # [C, N, 3]
         masks = info["radii"] > 0  # [C, N]
@@ -195,19 +206,23 @@ class Gaussians(nn.Module):
         **kwargs,
     ) -> Tuple[Tensor, Tensor, Dict]:
         """
-        Rasterize the splats, if appeareance optimization is on, add the color contribution from the appearance 
+        Rasterize the splats, if appeareance optimization is on, add the color contribution from the appearance
         module with the color of the splat.
 
-        Return 
+        Return
         -Rasterized image
-        -Rendered opacity mask 
+        -Rendered opacity mask
         -Additional rendering infos
         """
         means = self.splats["means"]  # [N, 3]
         # quats = F.normalize(self.splats["quats"], dim=-1)  # [N, 4]
         # rasterization does normalization internally
         quats = self.splats["quats"]  # [N, 4]
-        scales = torch.exp(self.splats["scales"]) if self.scale_activation=="exp" else torch.nn.Softplus()(self.splats["scales"])
+        scales = (
+            torch.exp(self.splats["scales"])
+            if self.scale_activation == "exp"
+            else torch.nn.Softplus()(self.splats["scales"])
+        )
         opacities = torch.sigmoid(self.splats["opacities"])  # [N,]
 
         image_ids = kwargs.pop("image_ids", None)
@@ -235,10 +250,8 @@ class Gaussians(nn.Module):
             width=width,
             height=height,
             packed=self.packed,
-            absgrad=( #TODO: try setting this to true, could be helpful for floaters
-                self.strategy.absgrad
-                if isinstance(self.strategy, DefaultStrategy)
-                else False
+            absgrad=(  # TODO: try setting this to true, could be helpful for floaters
+                self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False
             ),
             sparse_grad=self.sparse_grad,
             rasterize_mode=rasterize_mode,
@@ -265,11 +278,15 @@ class Gaussians(nn.Module):
         # quats = F.normalize(self.splats["quats"], dim=-1)  # [N, 4]
         # rasterization does normalization internally
         quats = self.splats["quats"]  # [N, 4]
-        scales = torch.exp(self.splats["scales"]) if self.scale_activation=="exp" else torch.nn.Softplus()(self.splats["scales"])
+        scales = (
+            torch.exp(self.splats["scales"])
+            if self.scale_activation == "exp"
+            else torch.nn.Softplus()(self.splats["scales"])
+        )
         opacities = torch.sigmoid(self.splats["opacities"])  # [N,]
 
         image_ids = kwargs.pop("image_ids", None)
-        colors = torch.sigmoid(self.splats["masks"].expand(-1, 3))  #(N,3)
+        colors = torch.sigmoid(self.splats["masks"].expand(-1, 3))  # (N,3)
 
         rasterize_mode = "antialiased" if self.antialiased else "classic"
         rendered_masks, _, _ = rasterization(
@@ -283,17 +300,13 @@ class Gaussians(nn.Module):
             width=width,
             height=height,
             packed=self.packed,
-            absgrad=( 
-                self.strategy.absgrad
-                if isinstance(self.strategy, DefaultStrategy)
-                else False
-            ),
+            absgrad=(self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False),
             sparse_grad=self.sparse_grad,
             rasterize_mode=rasterize_mode,
             camera_model=self.camera_model,
             **kwargs,
         )
-        return rendered_masks 
+        return rendered_masks
 
     def rasterize_splats_depths(
         self,
@@ -304,13 +317,16 @@ class Gaussians(nn.Module):
         masks: Optional[Tensor] = None,
         **kwargs,
     ) -> Tuple[Tensor, Tensor, Dict]:
-        """
-        """
+        """ """
         means = self.splats["means"]  # [N, 3]
         # quats = F.normalize(self.splats["quats"], dim=-1)  # [N, 4]
         # rasterization does normalization internally
         quats = self.splats["quats"]  # [N, 4]
-        scales = torch.exp(self.splats["scales"]) if self.scale_activation=="exp" else torch.nn.Softplus()(self.splats["scales"])
+        scales = (
+            torch.exp(self.splats["scales"])
+            if self.scale_activation == "exp"
+            else torch.nn.Softplus()(self.splats["scales"])
+        )
         opacities = torch.sigmoid(self.splats["opacities"])  # [N,]
 
         image_ids = kwargs.pop("image_ids", None)
@@ -327,10 +343,8 @@ class Gaussians(nn.Module):
             width=width,
             height=height,
             packed=self.packed,
-            absgrad=( #TODO: try setting this to true, could be helpful for floaters
-                self.strategy.absgrad
-                if isinstance(self.strategy, DefaultStrategy)
-                else False
+            absgrad=(  # TODO: try setting this to true, could be helpful for floaters
+                self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False
             ),
             sparse_grad=self.sparse_grad,
             rasterize_mode=rasterize_mode,
@@ -340,17 +354,15 @@ class Gaussians(nn.Module):
         )
         return render_colors, render_alphas, info
 
-        
-
     def rasterize_with_dynamic_params(self, pred_param_novel, raster_params, return_meta=False, activate_params=True):
         """
         Dynamically handle rasterization with different predicted parameters.
-        
+
         Args:
             pred_param_novel: The predicted parameter(s) from neural ODE, [T, n_gaussians, n_features]
-            deformed_params_dict: Dictionary indicating which parameter is being predicted (e.g., 'means', 'quats', etc.), also includes the shape 
+            deformed_params_dict: Dictionary indicating which parameter is being predicted (e.g., 'means', 'quats', etc.), also includes the shape
             raster_params: Dictionary containing all fixed parameters.
-        
+
         Returns:
             output image: (b, h, w, 3) and optional meta data
         """
@@ -360,29 +372,40 @@ class Gaussians(nn.Module):
         n_gaussians = pred_param_novel.shape[-2]
         n_features = pred_param_novel.shape[-1]
 
-        if pred_param_novel.dim() == 4: #this occurs if we have init_conditions > 1, in which case we can simply just reshape 
+        if (
+            pred_param_novel.dim() == 4
+        ):  # this occurs if we have init_conditions > 1, in which case we can simply just reshape
             pred_param_novel = pred_param_novel.reshape(-1, n_gaussians, n_features)
 
         temp_batch_size = pred_param_novel.shape[0] if pred_param_novel.dim() >= 2 else 1
 
+        final_image = (
+            torch.zeros(n_cams, temp_batch_size, h, w, 3, device="cuda")
+            if temp_batch_size > 1
+            else torch.zeros(n_cams, h, w, 3, device="cuda")
+        )
+        final_alphas = (
+            torch.zeros(n_cams, temp_batch_size, h, w, 1, device="cuda")
+            if temp_batch_size > 1
+            else torch.zeros(n_cams, h, w, 1, device="cuda")
+        )
 
-        final_image = torch.zeros(n_cams, temp_batch_size, h, w, 3, device="cuda") if temp_batch_size > 1 else torch.zeros(n_cams, h, w, 3, device="cuda")
-        final_alphas = torch.zeros(n_cams, temp_batch_size, h, w, 1, device="cuda") if temp_batch_size > 1 else torch.zeros(n_cams, h, w, 1, device="cuda")
-
-        #TODO: fix issue where we neeed to conduct ablations
+        # TODO: fix issue where we neeed to conduct ablations
         temp_raster_params = deepcopy(raster_params)
         lst_of_metas = []
-        for i in range(temp_batch_size): 
-            #We know a priori that means,quat,scales are what we deform
-            temp_raster_params["means"] = pred_param_novel[i,..., 0:3]
-            temp_raster_params["quats"] = pred_param_novel[i,..., 3:7]
-            temp_raster_params["scales"] = pred_param_novel[i,..., 7:10]
+        for i in range(temp_batch_size):
+            # We know a priori that means,quat,scales are what we deform
+            temp_raster_params["means"] = pred_param_novel[i, ..., 0:3]
+            temp_raster_params["quats"] = pred_param_novel[i, ..., 3:7]
+            temp_raster_params["scales"] = pred_param_novel[i, ..., 7:10]
 
             if activate_params:
-                new_raster_params = self.activate_params(temp_raster_params) #this activates all, which includes the deformed parameters as well
+                new_raster_params = self.activate_params(
+                    temp_raster_params
+                )  # this activates all, which includes the deformed parameters as well
             else:
                 new_raster_params = raster_params
-            renders, alphas, meta = rasterization(**new_raster_params) #renders[0] is (C, H, W, 3)
+            renders, alphas, meta = rasterization(**new_raster_params)  # renders[0] is (C, H, W, 3)
             lst_of_metas.append(meta)
             if temp_batch_size > 1:
                 final_image[:, i] = renders
@@ -391,77 +414,90 @@ class Gaussians(nn.Module):
                 final_image = renders
                 final_alphas = alphas
 
-        if return_meta:  
-            return final_image, final_alphas, lst_of_metas 
+        if return_meta:
+            return final_image, final_alphas, lst_of_metas
         else:
-            return final_image, final_alphas 
+            return final_image, final_alphas
 
-
-    def rasterize_with_dynamic_params_batched(self, pred_param_novel, raster_params, return_meta=False, activate_params=True):
+    def rasterize_with_dynamic_params_batched(
+        self, pred_param_novel, raster_params, return_meta=False, activate_params=True
+    ):
         """
         Dynamically handle rasterization with different predicted parameters.
-        
+
         Args:
             pred_param_novel: The predicted parameter(s) from neural ODE, [T, n_gaussians, n_features]
-            deformed_params_dict: Dictionary indicating which parameter is being predicted (e.g., 'means', 'quats', etc.), also includes the shape 
+            deformed_params_dict: Dictionary indicating which parameter is being predicted (e.g., 'means', 'quats', etc.), also includes the shape
             raster_params: Dictionary containing all fixed parameters.
-        
+
         Returns:
             output image: (b, h, w, 3) and optional meta data
         """
-        #TODO: here u need to specify the background color as part of the rasterization argument.
+        # TODO: here u need to specify the background color as part of the rasterization argument.
         h, w = raster_params["height"], raster_params["width"]
         n_cams = len(raster_params["viewmats"])
 
         n_gaussians = pred_param_novel.shape[-2]
         n_features = pred_param_novel.shape[-1]
 
-        if pred_param_novel.dim() == 4: #this occurs if we have init_conditions > 1, in which case we can simply just reshape 
+        if (
+            pred_param_novel.dim() == 4
+        ):  # this occurs if we have init_conditions > 1, in which case we can simply just reshape
             pred_param_novel = pred_param_novel.reshape(-1, n_gaussians, n_features)
 
         temp_batch_size = pred_param_novel.shape[0] if pred_param_novel.dim() >= 2 else 1
 
         temp_raster_params = deepcopy(raster_params)
-        #We know a priori that means,quat,scales are what we deform
-        temp_raster_params["means"] = pred_param_novel[..., 0:3] #(T,N,3)
-        temp_raster_params["quats"] = pred_param_novel[..., 3:7] #(T,N,4)
-        temp_raster_params["scales"] = pred_param_novel[..., 7:10] #(T,N,3)
+        # We know a priori that means,quat,scales are what we deform
+        temp_raster_params["means"] = pred_param_novel[..., 0:3]  # (T,N,3)
+        temp_raster_params["quats"] = pred_param_novel[..., 3:7]  # (T,N,4)
+        temp_raster_params["scales"] = pred_param_novel[..., 7:10]  # (T,N,3)
 
-        temp_raster_params["opacities"]= raster_params["opacities"][None].expand(temp_batch_size,-1) #(T,N)
-        temp_raster_params["colors"] = raster_params["colors"][None].expand(temp_batch_size, -1,-1,-1) #(T,N,K,3)
-        temp_raster_params["viewmats"] = raster_params["viewmats"][None].expand(temp_batch_size,-1,-1,-1) #(T,C,4,4)
-        temp_raster_params["Ks"] = raster_params["Ks"][None].expand(temp_batch_size,-1,-1,-1).to(temp_raster_params["viewmats"]) #(T,C,3,3)
-        temp_raster_params["backgrounds"] = raster_params["backgrounds"][None].expand(temp_batch_size,-1,-1) #(T,C,3)
+        temp_raster_params["opacities"] = raster_params["opacities"][None].expand(temp_batch_size, -1)  # (T,N)
+        temp_raster_params["colors"] = raster_params["colors"][None].expand(temp_batch_size, -1, -1, -1)  # (T,N,K,3)
+        temp_raster_params["viewmats"] = raster_params["viewmats"][None].expand(
+            temp_batch_size, -1, -1, -1
+        )  # (T,C,4,4)
+        temp_raster_params["Ks"] = (
+            raster_params["Ks"][None].expand(temp_batch_size, -1, -1, -1).to(temp_raster_params["viewmats"])
+        )  # (T,C,3,3)
+        temp_raster_params["backgrounds"] = raster_params["backgrounds"][None].expand(
+            temp_batch_size, -1, -1
+        )  # (T,C,3)
 
         if activate_params:
-            new_raster_params = self.activate_params(temp_raster_params) #this activates all, which includes the deformed parameters as well
+            new_raster_params = self.activate_params(
+                temp_raster_params
+            )  # this activates all, which includes the deformed parameters as well
         else:
-            new_raster_params = temp_raster_params 
+            new_raster_params = temp_raster_params
 
-        #make sure this matches the rasterization params in the static recon
-        new_raster_params["packed"] = self.packed #the default packed argument is True
+        # make sure this matches the rasterization params in the static recon
+        new_raster_params["packed"] = self.packed  # the default packed argument is True
         new_raster_params["absgrad"] = self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False
         new_raster_params["sparse_grad"] = self.sparse_grad
         new_raster_params["camera_model"] = self.camera_model
- 
-        renders, alphas, lst_of_metas = rasterization(**new_raster_params) #renders is of shape (T,C, H,W,3)
-        final_image = renders.transpose(1,0) #(C,T,H,W,3)
-        final_alphas = alphas.transpose(1,0)
 
-        if return_meta:  
-            return final_image, final_alphas, lst_of_metas 
+        renders, alphas, lst_of_metas = rasterization(**new_raster_params)  # renders is of shape (T,C, H,W,3)
+        final_image = renders.transpose(1, 0)  # (C,T,H,W,3)
+        final_alphas = alphas.transpose(1, 0)
+
+        if return_meta:
+            return final_image, final_alphas, lst_of_metas
         else:
-            return final_image, final_alphas 
+            return final_image, final_alphas
 
-    def rasterize_with_dynamic_params_custom(self, pred_param_novel, raster_params, return_meta=False, activate_params=True):
+    def rasterize_with_dynamic_params_custom(
+        self, pred_param_novel, raster_params, return_meta=False, activate_params=True
+    ):
         """
         Dynamically handle rasterization with different predicted parameters.
-        
+
         Args:
             pred_param_novel: The predicted parameter(s) from neural ODE, [T, n_gaussians, n_features]
-            deformed_params_dict: Dictionary indicating which parameter is being predicted (e.g., 'means', 'quats', etc.), also includes the shape 
+            deformed_params_dict: Dictionary indicating which parameter is being predicted (e.g., 'means', 'quats', etc.), also includes the shape
             raster_params: Dictionary containing all fixed parameters.
-        
+
         Returns:
             output image: (b, h, w, 3) and optional meta data
         """
@@ -469,70 +505,75 @@ class Gaussians(nn.Module):
         n_gaussians = pred_param_novel.shape[-2]
         n_features = pred_param_novel.shape[-1]
 
-        if pred_param_novel.dim() == 4: #this occurs if we have init_conditions > 1, in which case we can simply just reshape 
+        if (
+            pred_param_novel.dim() == 4
+        ):  # this occurs if we have init_conditions > 1, in which case we can simply just reshape
             pred_param_novel = pred_param_novel.reshape(-1, n_gaussians, n_features)
 
         temp_batch_size = pred_param_novel.shape[0] if pred_param_novel.dim() >= 2 else 1
 
         temp_raster_params = deepcopy(raster_params)
-        #We know a priori that means,quat,scales are what we deform
-        temp_raster_params["means"] = pred_param_novel[..., 0:3] #(T,N,3)
-        temp_raster_params["quats"] = pred_param_novel[..., 3:7] #(T,N,4)
-        temp_raster_params["scales"] = pred_param_novel[..., 7:10] #(T,N,3)
+        # We know a priori that means,quat,scales are what we deform
+        temp_raster_params["means"] = pred_param_novel[..., 0:3]  # (T,N,3)
+        temp_raster_params["quats"] = pred_param_novel[..., 3:7]  # (T,N,4)
+        temp_raster_params["scales"] = pred_param_novel[..., 7:10]  # (T,N,3)
 
-        temp_raster_params["opacities"]= raster_params["opacities"][None].expand(temp_batch_size,-1) #(T,N)
-        temp_raster_params["colors"] = raster_params["colors"][None].expand(temp_batch_size, -1,-1,-1) #(T,N,K,3)
-        temp_raster_params["viewmats"] = raster_params["viewmats"][None].expand(temp_batch_size,-1,-1,-1) #(T,C,4,4)
-        temp_raster_params["Ks"] = raster_params["Ks"][None].expand(temp_batch_size,-1,-1,-1).to(temp_raster_params["viewmats"]) #(T,C,3,3)
+        temp_raster_params["opacities"] = raster_params["opacities"][None].expand(temp_batch_size, -1)  # (T,N)
+        temp_raster_params["colors"] = raster_params["colors"][None].expand(temp_batch_size, -1, -1, -1)  # (T,N,K,3)
+        temp_raster_params["viewmats"] = raster_params["viewmats"][None].expand(
+            temp_batch_size, -1, -1, -1
+        )  # (T,C,4,4)
+        temp_raster_params["Ks"] = (
+            raster_params["Ks"][None].expand(temp_batch_size, -1, -1, -1).to(temp_raster_params["viewmats"])
+        )  # (T,C,3,3)
 
         if activate_params:
-            new_raster_params = self.activate_params(temp_raster_params) #this activates all, which includes the deformed parameters as well
+            new_raster_params = self.activate_params(
+                temp_raster_params
+            )  # this activates all, which includes the deformed parameters as well
         else:
-            new_raster_params = temp_raster_params 
-        renders, alphas, lst_of_metas = rasterization(**new_raster_params) #renders is of shape (T,C, H,W,3)
-        final_image = renders.transpose(1,0) #(C,T,H,W,3)
-        final_alphas = alphas.transpose(1,0)
+            new_raster_params = temp_raster_params
+        renders, alphas, lst_of_metas = rasterization(**new_raster_params)  # renders is of shape (T,C, H,W,3)
+        final_image = renders.transpose(1, 0)  # (C,T,H,W,3)
+        final_alphas = alphas.transpose(1, 0)
 
-        if return_meta:  
-            return final_image, final_alphas, lst_of_metas 
+        if return_meta:
+            return final_image, final_alphas, lst_of_metas
         else:
-            return final_image, final_alphas 
-    
+            return final_image, final_alphas
 
-    
-
-    def rasterize_all_times(self, pred_param , raster_params, iteration, name="debug", cam_index=0):
+    def rasterize_all_times(self, pred_param, raster_params, iteration, name="debug", cam_index=0):
         """
         Integrate all times using raster_params from canonical_params
         Use this for debugging the learned image trajectory
         """
         import imageio
         import numpy as np
-        to8b = lambda x : (255*np.clip(x.detach().cpu().numpy(),0,1)).astype(np.uint8)
-        out_img, alphas = self.rasterize_with_dynamic_params(pred_param, raster_params, activate_params=True) 
-        #out_img (N, T, H, W, 3)
-        num_images = out_img.shape[0] 
+
+        to8b = lambda x: (255 * np.clip(x.detach().cpu().numpy(), 0, 1)).astype(np.uint8)
+        out_img, alphas = self.rasterize_with_dynamic_params(pred_param, raster_params, activate_params=True)
+        # out_img (N, T, H, W, 3)
+        num_images = out_img.shape[0]
         num_timesteps = out_img.shape[1]
         video_duration = 3
         cam_i_image = out_img[cam_index]
         rendered_lst = []
         for image in cam_i_image:
             rendered_lst.append(to8b(image))
-        name = f"cam_{cam_index}_all_it{iteration}.mp4" 
-        imageio.mimwrite(name, rendered_lst, fps=num_timesteps/video_duration) 
+        name = f"cam_{cam_index}_all_it{iteration}.mp4"
+        imageio.mimwrite(name, rendered_lst, fps=num_timesteps / video_duration)
         # plt.imshow(alphas.cpu().numpy())
         # plt.savefig(f"predicted_alphas_{name}_{iteration}")
         # plt.close()
-
 
     def down_proj(self, means, viewmats, Ks, covars=None, return_depth=False):
         """
         Project gaussians means from 3D coords down to 2D.
         NOTE: the R is from the viewmatrix not the R from quaternion.
-        
+
         Args:
-        -means: (T, N, 3), 3D means in world coords 
-        -viewmats: [4,4] world2cam 
+        -means: (T, N, 3), 3D means in world coords
+        -viewmats: [4,4] world2cam
         -Ks: intrinsics
         -covars: (T, N, 3,3), 3D covariances in world coords
 
@@ -541,13 +582,13 @@ class Gaussians(nn.Module):
         if means.dim() == 2:
             means = means.unsqueeze(0)
 
-        #world -> cam
+        # world -> cam
         R = viewmats[:, :3, :3]  # [1, 3, 3]
         t = viewmats[:, :3, 3]  # [1, 3]
         means_c = torch.einsum("cij,cnj->cni", R, means) + t[:, None, :]  # (T, N, 3)
 
-        #cam -> coords
-        tx, ty, tz = torch.unbind(means_c, dim=-1) 
+        # cam -> coords
+        tx, ty, tz = torch.unbind(means_c, dim=-1)
         means2d = torch.einsum("cij,cnj->cni", Ks[:, :2, :3], means_c)  # [T, N, 2]
         means2d = means2d / tz[..., None]  # [T, N, 2]
 
@@ -574,10 +615,8 @@ class Gaussians(nn.Module):
         #     )  # [C, N, 3]
         #     return means2d, covars2d, conics
         return means2d
-    
-    
 
-    def rasterize_quick(self,c2w, K):
+    def rasterize_quick(self, c2w, K):
         """
         Quickly rasterize, assume image dimensions is (400,400)
         """
@@ -594,7 +633,6 @@ class Gaussians(nn.Module):
 
         return renders
 
-        
     def rasterize_quick_captured(self, c2w, K, height, width):
         """
         Quickly rasterize
@@ -611,4 +649,3 @@ class Gaussians(nn.Module):
         )
 
         return renders, alphas, info
-        

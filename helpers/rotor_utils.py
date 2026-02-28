@@ -1,20 +1,21 @@
-
 #
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import torch
-import sys
-from datetime import datetime
-import numpy as np
 import random
+import sys
+
+from datetime import datetime
+
+import numpy as np
+import torch
 
 
 def inverse_sigmoid(x):
@@ -30,9 +31,7 @@ def PILtoTorch(pil_image, resolution):
         return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
 
 
-def get_expon_lr_func(
-        lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
-):
+def get_expon_lr_func(lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000):
     """
     Copied from Plenoxels
 
@@ -68,12 +67,12 @@ def get_expon_lr_func(
 
 class LinearNoise:
     def __init__(
-            self,
-            lr_init,
-            lr_final,
-            lr_delay_steps=0,
-            lr_delay_mult=1.0,
-            max_steps=1000000,
+        self,
+        lr_init,
+        lr_final,
+        lr_delay_steps=0,
+        lr_delay_mult=1.0,
+        max_steps=1000000,
     ):
         self.lr_init = lr_init
         self.lr_final = lr_final
@@ -97,9 +96,7 @@ class LinearNoise:
         return delay_rate * log_lerp
 
 
-def get_linear_noise_func(
-        lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
-):
+def get_linear_noise_func(lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000):
     """
     Copied from Plenoxels
 
@@ -139,6 +136,7 @@ def strip_lowerdiag(L):
 def strip_symmetric(sym):
     return strip_lowerdiag(sym)
 
+
 def rotor2quaterion(r):
     x, y, z, w = torch.split(r, 1, dim=-1)
     quat_w = x
@@ -147,6 +145,7 @@ def rotor2quaterion(r):
     quat_z = -y
     return torch.cat([quat_w, quat_x, quat_y, quat_z], dim=-1)
 
+
 def quaternion2rotor(r):
     w, x, y, z = torch.split(r, 1, dim=-1)
     rotors_x = w
@@ -154,6 +153,7 @@ def quaternion2rotor(r):
     rotors_z = y
     rotors_w = -x
     return torch.cat([rotors_x, rotors_y, rotors_z, rotors_w], dim=-1)
+
 
 def rotornorm(rotors1, rotors2, normalize_pesudo=False):
 
@@ -174,7 +174,7 @@ def rotornorm(rotors1, rotors2, normalize_pesudo=False):
             a, bxy, bxz, byz, bxw, byw, bzw, pxyzw = torch.split(rotors_pick, 1, dim=-1)
 
             # float l2 = a * a + bxy * bxy + bxz * bxz + byz * byz + bxw * bxw + byw * byw + bzw * bzw + pxyzw * pxyzw;
-            l2 = (rotors_pick ** 2).sum(dim=-1, keepdim=True)
+            l2 = (rotors_pick**2).sum(dim=-1, keepdim=True)
             delta = (torch.sqrt(l2 * l2 - 4 * eps * eps) - l2) / (2 * eps)
 
             da = +delta * pxyzw
@@ -195,13 +195,13 @@ def rotornorm(rotors1, rotors2, normalize_pesudo=False):
             bywwnew = byw + dbyw
             bzwwnew = bzw + dbzw
 
-            rotors_new = torch.cat([anew, bxywnew, bxzwnew, byzwnew, bxwwnew, bywwnew,bzwwnew, pxyzwnew], dim=-1)
+            rotors_new = torch.cat([anew, bxywnew, bxzwnew, byzwnew, bxwwnew, bywwnew, bzwwnew, pxyzwnew], dim=-1)
             # rotors[mask] = rotors_new
             # cannot be inplace operation
             rotors_new_full = torch.zeros_like(rotors)
             rotors_new_full[mask] = rotors_new
             rotors = torch.where(mask.reshape(-1, 1).expand(-1, 8), rotors_new_full, rotors)
-    
+
     length = rotors.norm(dim=-1, keepdim=True)
     rotors = rotors / (1e-7 + length)
 
@@ -232,17 +232,18 @@ def build_rotation(r):
     R[:, 2, 2] = 1 - 2 * (x * x + y * y)
     return R
 
-def build_rotation_from_rotor8(rotors1, rotors2):
-    a = rotors1[:,0]
-    s = a
-    bxy = rotors1[:,1]
-    bxz = rotors1[:,2]
-    byz = rotors1[:,3]
 
-    bxw = rotors2[:,0]
-    byw = rotors2[:,1]
-    bzw = rotors2[:,2]
-    pxyzw = rotors2[:,3]
+def build_rotation_from_rotor8(rotors1, rotors2):
+    a = rotors1[:, 0]
+    s = a
+    bxy = rotors1[:, 1]
+    bxz = rotors1[:, 2]
+    byz = rotors1[:, 3]
+
+    bxw = rotors2[:, 0]
+    byw = rotors2[:, 1]
+    bzw = rotors2[:, 2]
+    pxyzw = rotors2[:, 3]
 
     N = a.shape[0]
     r = torch.zeros(N, 4, 4, device=a.device)
@@ -290,6 +291,7 @@ def build_scaling_rotation(s, r):
     L = R @ L
     return L
 
+
 def build_scaling_rotation_4d(s, r1, r2):
     L = torch.zeros((s.shape[0], 4, 4), dtype=torch.float, device=s.device)
     R = build_rotation_from_rotor8(r1, r2)
@@ -302,26 +304,27 @@ def build_scaling_rotation_4d(s, r1, r2):
     L = R @ L
     return L
 
+
 def slice_4d(scale, r1, r2):
     """
     Eqn 63 from the paper,
     Return full 3D covariance matrix as the rasterizer expects full 3D
     """
-    L = build_scaling_rotation_4d(scale, r1, r2) #building the R @ S, using rotor 
-    sigma = L @ L.permute(0, 2, 1) #building the 4d covar
-   
-    w = 1 / sigma[:, 3,3]
+    L = build_scaling_rotation_4d(scale, r1, r2)  # building the R @ S, using rotor
+    sigma = L @ L.permute(0, 2, 1)  # building the 4d covar
+
+    w = 1 / sigma[:, 3, 3]
     alpha = sigma[:, 0, 3] * w
-    beta = sigma[:, 1,3] * w
+    beta = sigma[:, 1, 3] * w
     gamma = sigma[:, 2, 3] * w
 
-    #converting 4d covariance -> 3d
-    cov_3d_out0 = sigma[:, 0, 0] - sigma[:, 0, 3] * alpha #diagonal element 1
-    cov_3d_out1 = sigma[:, 0, 1] - sigma[:, 0, 3] * beta #off-diag 1
-    cov_3d_out2 = sigma[:, 0, 2] - sigma[:, 0, 3] * gamma #off-diag2
-    cov_3d_out3 = sigma[:, 1, 1] - sigma[:, 1, 3] * beta #diagonal element 2
-    cov_3d_out4 = sigma[:, 1, 2] - sigma[:, 1, 3] * gamma #off-diag 3
-    cov_3d_out5 = sigma[:, 2, 2] - sigma[:, 2, 3] * gamma #diagonal element 3
+    # converting 4d covariance -> 3d
+    cov_3d_out0 = sigma[:, 0, 0] - sigma[:, 0, 3] * alpha  # diagonal element 1
+    cov_3d_out1 = sigma[:, 0, 1] - sigma[:, 0, 3] * beta  # off-diag 1
+    cov_3d_out2 = sigma[:, 0, 2] - sigma[:, 0, 3] * gamma  # off-diag2
+    cov_3d_out3 = sigma[:, 1, 1] - sigma[:, 1, 3] * beta  # diagonal element 2
+    cov_3d_out4 = sigma[:, 1, 2] - sigma[:, 1, 3] * gamma  # off-diag 3
+    cov_3d_out5 = sigma[:, 2, 2] - sigma[:, 2, 3] * gamma  # diagonal element 3
     cov_3d_out = torch.stack([cov_3d_out0, cov_3d_out1, cov_3d_out2, cov_3d_out3, cov_3d_out4, cov_3d_out5], dim=-1)
 
     cov_3d_full = torch.zeros((cov_3d_out.shape[0], 3, 3), device=cov_3d_out.device)
@@ -335,7 +338,7 @@ def slice_4d(scale, r1, r2):
     cov_3d_full[:, 2, 1] = cov_3d_out4  # Σ_yz (symmetric)
     cov_3d_full[:, 2, 2] = cov_3d_out5  # Σ_zz
     speed = torch.stack([alpha, beta, gamma], dim=-1)
-    
+
     return cov_3d_full, cov_3d_out, speed, w
 
 
@@ -364,7 +367,7 @@ def safe_state(silent):
     torch.cuda.set_device(torch.device("cuda:0"))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     k = 100
     rotors1 = torch.rand(100, 4)
     rotors2 = torch.zeros_like(rotors1)
