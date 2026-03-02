@@ -446,6 +446,14 @@ class Evaluator(BaseEngine):
 
         if cfg.train_interp:
             means_t0 = self.gaussians.splats.means
+            box_center = None
+            dimensions = None
+            rotation_angles = (0, 0, 0)
+            scene = "blenderflowers"
+            box_center = [0.0, 0.0, 0.0]
+            dimensions = (1.0, 1.0, 1.0)
+            rotation_angles = (0, 0, 0)
+            scene = "blenderflowers"
             if "clematis" in cfg.data_dir:
                 box_center = [0.015, 0.000, 1.678]
                 dimensions = (0.350, 0.3, 0.5)
@@ -487,9 +495,14 @@ class Evaluator(BaseEngine):
                 rotation_angles = (0, 0, 0)
                 scene = "plant_5"
 
-            _, bounding_box_mask = select_points_in_prism(
-                means_t0.detach(), box_center, dimensions, rotation_angles=rotation_angles
-            )
+            if box_center is None or dimensions is None:
+                print("No predefined bbox for this scene; using all gaussians.")
+                bounding_box_mask = torch.ones(means_t0.shape[0], dtype=bool)
+                scene = "blenderflowers"
+            else:
+                _, bounding_box_mask = select_points_in_prism(
+                    means_t0.detach(), box_center, dimensions, rotation_angles=rotation_angles
+                )
             selected_gaussians = fixed_init_params[bounding_box_mask]
             pred_param_selected = self.dynamical_model(selected_gaussians, inp_t)  # (T, N_gaussians, feat_dim)
             T = pred_param_selected.shape[0]
@@ -645,6 +658,9 @@ class Evaluator(BaseEngine):
         full_eval_path = os.path.join(cfg.result_dir, "full_eval")
         debug_path = os.path.join(cfg.result_dir, "debug")
         os.makedirs(debug_path, exist_ok=True)
+        enable_render_tracks = cfg.render_tracks
+        enable_animate_pc = cfg.animate_pc
+        gt_t0_all = None
 
         if not cfg.skip_test:
             print("rendering test images")
@@ -658,7 +674,16 @@ class Evaluator(BaseEngine):
                 test_eval_path = os.path.join(full_eval_path, "test_masked")
             means_t0 = fixed_init_params[:, :3]
             assert cfg.learn_masks ^ cfg.use_bounding_box, "can only learn masks or use bounding box"
-            if "clematis" in cfg.data_dir:
+            box_center = None
+            dimensions = None
+            rotation_angles = (0, 0, 0)
+            scene = "blenderflowers"
+            if "blenderflowers" in cfg.data_dir.lower():
+                box_center = [0.0, 0.0, 0.0]
+                dimensions = (1.0, 1.0, 1.0)
+                rotation_angles = (0, 0, 0)
+                scene = "blenderflowers"
+            elif "clematis" in cfg.data_dir:
                 box_center = [0.015, 0.000, 1.678]
                 dimensions = (0.350, 0.3, 0.5)
                 rotation_angles = (0, 0, 0)
@@ -704,9 +729,13 @@ class Evaluator(BaseEngine):
                 rotation_angles = (0, 0, 0)
                 scene = "rose"
 
-            _, bounding_box_mask = select_points_in_prism(
-                means_t0.detach(), box_center, dimensions, rotation_angles=rotation_angles
-            )
+            if box_center is None or dimensions is None:
+                print("No predefined bbox for this scene; using all gaussians.")
+                bounding_box_mask = torch.ones(means_t0.shape[0], dtype=bool)
+            else:
+                _, bounding_box_mask = select_points_in_prism(
+                    means_t0.detach(), box_center, dimensions, rotation_angles=rotation_angles
+                )
             # raster_params["opacities"] = raster_params["opacities"][bounding_box_mask]
             # raster_params["colors"] = raster_params["colors"][bounding_box_mask]
             print(f"using only {bounding_box_mask.sum()} gaussians")
@@ -774,20 +803,28 @@ class Evaluator(BaseEngine):
             colors = torch.clamp(out_img, 0.0, 1.0)
             image_colors = colors
             eval_colors = colors
-            # NOTE: we load these gt tracks regardless of whether we render them.
-            # Code is taken from https://github.com/momentum-robotics-lab/deformgs
-            # assert cfg.track_path != "", "please specify a valid track_path"
-            gt_tracks_path = os.path.join(cfg.data_dir, "meshes", f"relevant_{scene}_meshes", "trajectory_frames.npz")
+            # Only load GT track meshes if we explicitly need track/point-cloud visualization.
+            gt_t0_all = None
             gt_idxs = None
-            gt_tracks = np.load(gt_tracks_path)
-            gt_t0_all = gt_tracks["frame_0000"]  # (N,3)
-            if "plant" not in scene:
-                subsample_factor_tracks = 15  # prevent overcrowding (10k points is good)
-            else:
-                subsample_factor_tracks = 1  # the plants scene have fewer mesh vertices so no need to subsample
-
-            gt_t0 = gt_t0_all[::subsample_factor_tracks]
-            print(f"gt viz tracks has {gt_t0.shape[0]} points")
+            enable_render_tracks = cfg.render_tracks
+            enable_animate_pc = cfg.animate_pc
+            if enable_render_tracks or enable_animate_pc:
+                gt_tracks_path = os.path.join(
+                    cfg.data_dir, "meshes", f"relevant_{scene}_meshes", "trajectory_frames.npz"
+                )
+                if os.path.exists(gt_tracks_path):
+                    gt_tracks = np.load(gt_tracks_path)
+                    gt_t0_all = gt_tracks["frame_0000"]  # (N,3)
+                    if "plant" not in scene:
+                        subsample_factor_tracks = 15  # prevent overcrowding (10k points is good)
+                    else:
+                        subsample_factor_tracks = 1  # plants have fewer mesh vertices
+                    gt_t0 = gt_t0_all[::subsample_factor_tracks]
+                    print(f"gt viz tracks has {gt_t0.shape[0]} points")
+                else:
+                    print(f"[warn] missing GT tracks at {gt_tracks_path}; disabling track and point-cloud visualizations")
+                    enable_render_tracks = False
+                    enable_animate_pc = False
             all_trajs = None
             all_times = None
             tracking_window = cfg.tracking_window
@@ -798,7 +835,7 @@ class Evaluator(BaseEngine):
             show_flow = True
             flow_skip = 1  # skips gaussians
             means_t0 = pred_param[0, ..., :3]
-            if gt_idxs is None:
+            if enable_render_tracks and gt_idxs is None:
                 print("gt idxs not defined, computing closest gaussians to gt_t0")
                 gt_idxs = find_closest_gauss(gt_t0, means_t0.cpu().numpy())
                 if show_only_visible:
@@ -844,12 +881,12 @@ class Evaluator(BaseEngine):
                     pred_image = (pred_images * 255).cpu().numpy().astype(np.uint8)
                     imageio.imwrite(f"{cam_test_path}/{j_plus_offset:05d}.png", pred_image)  # ranges from [0,17]
 
-                if cfg.is_reverse:
-                    track_cam_test_path = f"{test_eval_path}/tracks_reversed/{cam_id}"
-                else:
-                    track_cam_test_path = f"{test_eval_path}/tracks/{cam_id}"
-                os.makedirs(track_cam_test_path, exist_ok=True)
-                if cfg.render_tracks:
+                if enable_render_tracks:
+                    if cfg.is_reverse:
+                        track_cam_test_path = f"{test_eval_path}/tracks_reversed/{cam_id}"
+                    else:
+                        track_cam_test_path = f"{test_eval_path}/tracks/{cam_id}"
+                    os.makedirs(track_cam_test_path, exist_ok=True)
                     # Process each frame for this camera
                     for j in range(len(pred_images) if multi_images else 1):
                         print(f"processing the {j}th image")
@@ -1014,22 +1051,23 @@ class Evaluator(BaseEngine):
                 fps=out_img.shape[1] / cfg.video_duration,
             )
 
-            print("generating the indices for pc visualizations")
-            viz_pc_t0 = (
-                gt_t0_all  # here we recompute it because we dont subsample the gt mesh vertices (we want preciseness)
-            )
-            try:
-                gt_idxs_viz_pc = torch.from_numpy(np.load(os.path.join(test_eval_path, "gt_idxs_viz_pc.npy")))
-            except:
-                print("couldnt find cached gt idxs")
-                gt_idxs_viz_pc = find_closest_gauss(viz_pc_t0, means_t0.cpu().numpy())
-                np.save(f"{test_eval_path}/gt_idxs_viz_pc.npy", gt_idxs_viz_pc.numpy())
+            if enable_animate_pc and gt_t0_all is not None:
+                print("generating the indices for pc visualizations")
+                viz_pc_t0 = (
+                    gt_t0_all  # here we recompute it because we dont subsample the gt mesh vertices
+                )
+                try:
+                    gt_idxs_viz_pc = torch.from_numpy(np.load(os.path.join(test_eval_path, "gt_idxs_viz_pc.npy")))
+                except:
+                    print("couldnt find cached gt idxs")
+                    gt_idxs_viz_pc = find_closest_gauss(viz_pc_t0, means_t0.cpu().numpy())
+                    np.save(f"{test_eval_path}/gt_idxs_viz_pc.npy", gt_idxs_viz_pc.numpy())
 
-            opacities_idxs_viz_pc = torch.sigmoid(raster_params["opacities"][gt_idxs_viz_pc]).cpu()
-            gt_idxs_viz_pc = gt_idxs_viz_pc[opacities_idxs_viz_pc > opacity_threshold_pc_viz]
-            visible_points = pred_param[:, gt_idxs_viz_pc, :3]  # (T,N,3)
+                opacities_idxs_viz_pc = torch.sigmoid(raster_params["opacities"][gt_idxs_viz_pc]).cpu()
+                gt_idxs_viz_pc = gt_idxs_viz_pc[opacities_idxs_viz_pc > opacity_threshold_pc_viz]
+                visible_points = pred_param[:, gt_idxs_viz_pc, :3]  # (T,N,3)
 
-        if cfg.animate_pc:
+        if enable_animate_pc:
             # Have to redo it here in case we skip test
             if cfg.render_foreground:
                 if cfg.bkgd_color == [1, 1, 1]:  # white background
@@ -1051,10 +1089,9 @@ class Evaluator(BaseEngine):
             gt_images = gt_images.to(device)
             raster_params["viewmats"] = c2ws.to(device)  # when we rasterize we need to invert this!
 
-            gt_tracks_path = os.path.join(cfg.data_dir, "meshes", f"relevant_{scene}_meshes", "trajectory_frames.npz")
-            gt_idxs = None
-            gt_tracks = np.load(gt_tracks_path)
-            gt_t0_all = gt_tracks["frame_0000"]  # (N,3)
+            if gt_t0_all is None:
+                print("[warn] skipping point-cloud animation due to missing GT tracks")
+                return
             if "plant" not in scene:
                 subsample_factor_tracks = 15  # prevent overcrowding (10k points is good)
             else:

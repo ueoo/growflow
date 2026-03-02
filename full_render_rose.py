@@ -1,14 +1,17 @@
+# Use this script to officially render all imgs for metric computation
+# The idea is we instantiate the Runner class but we run the full_evaluator class instead
 import os
-import time
 
 from glob import glob
-from pathlib import Path
 
+import gsplat
+import numpy as np
 import torch
 import tyro
 import yaml
 
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
+from tqdm import tqdm
 
 from configs.blender_config_rose import Config
 from runner import Runner
@@ -74,65 +77,7 @@ def is_default_value(cfg, key, value):
     return False
 
 
-def resolve_blender_data_dir(cfg: Config) -> None:
-    """
-    Resolve cfg.data_dir for blender training.
-
-    Supports both:
-    1) A single scene dir containing transforms_train/test.json
-    2) A Reconstruction root containing many scene dirs
-       (e.g., setname_samplename folders).
-    """
-    if cfg.data_type != "blender":
-        return
-
-    data_dir = Path(cfg.data_dir).expanduser()
-    if not data_dir.exists():
-        raise FileNotFoundError(f"data_dir does not exist: {data_dir}")
-
-    has_transforms = (data_dir / "transforms_train.json").exists() and (data_dir / "transforms_test.json").exists()
-    if has_transforms:
-        cfg.data_dir = str(data_dir)
-        return
-
-    # If this is a root folder, find valid scene subfolders.
-    candidates = [
-        d
-        for d in sorted(data_dir.iterdir())
-        if d.is_dir() and (d / "transforms_train.json").exists() and (d / "transforms_test.json").exists()
-    ]
-    if len(candidates) == 0:
-        raise ValueError(
-            f"Could not find scene folders under {data_dir}. "
-            "Expected subfolders containing transforms_train.json and transforms_test.json."
-        )
-
-    selected: Path
-    # Reuse existing config field to specify scene folder when data_dir is a root.
-    if cfg.metric_scene:
-        selected = data_dir / cfg.metric_scene
-        if selected not in candidates:
-            available = ", ".join([d.name for d in candidates[:20]])
-            raise ValueError(
-                f"metric_scene='{cfg.metric_scene}' not found under {data_dir}. " f"Available examples: {available}"
-            )
-    elif len(candidates) == 1:
-        selected = candidates[0]
-    else:
-        available = ", ".join([d.name for d in candidates[:20]])
-        raise ValueError(
-            f"data_dir points to a Reconstruction root with {len(candidates)} scenes. "
-            "Please set --metric_scene to choose one scene folder. "
-            f"Available examples: {available}"
-        )
-
-    cfg.data_dir = str(selected)
-    print(f"Resolved blender scene: {cfg.data_dir}")
-
-
-def main(cfg: Config):
-
-    # TODO: not doing anything right now
+def main(cfg):
     # if cfg.dynamic_ckpt is not None:
     #     dynamic_ckpt = cfg.dynamic_ckpt[0]
     #     print("found dynamic checkpoint, searching for existing config")
@@ -141,8 +86,9 @@ def main(cfg: Config):
     #     try:
     #         # Store the original CLI args that should override the loaded config
     #         cli_overrides = {}
-    #         for key, value in vars(cfg).items(): #this overwrites everything, so you need to specify the config values explicitly
-    #             if key != "load_from_cfg":
+    #         # Capture all explicitly provided CLI args (this assumes tyro sets these as non-default values)
+    #         for key, value in vars(cfg).items():
+    #             if key != "load_from_cfg" and not is_default_value(cfg, key, value): #check what extra cli arguments against default config
     #                 cli_overrides[key] = value
 
     #         # Load the config from file
@@ -155,38 +101,15 @@ def main(cfg: Config):
     #         print("Config loaded successfully with CLI overrides preserved")
     #     except Exception as e:
     #         print(f"Could not open config due to {e}, rolling back to default config settings...")
-
-    resolve_blender_data_dir(cfg)
     display_config(cfg)
+    assert cfg.dynamic_ckpt is not None, "please specify dynamic ckpt"
+    print(f"Running full eval on {cfg.dynamic_ckpt}")
     runner = Runner(cfg)
-    runner.run()
-
-    if not cfg.disable_viewer:
-        print("Viewer running... Ctrl+C to exit.")
-        time.sleep(1000000)
+    runner.full_eval()
 
 
 if __name__ == "__main__":
-    # Only supports Default densification
-    configs = {
-        "default": (
-            "Gaussian splatting training using densification heuristics from the original paper.",
-            Config(
-                strategy=DefaultStrategy(verbose=True),
-            ),
-        ),
-        "mcmc": (
-            "Gaussian splatting training using densification from the paper '3D Gaussian Splatting as Markov Chain Monte Carlo'.",
-            Config(
-                init_opa=0.5,
-                init_scale=0.1,
-                opacity_reg=0.01,
-                scale_reg=0.01,
-                strategy=MCMCStrategy(verbose=True,cap_max=100000),
-            ),
-        ),
-    }
-    cfg = tyro.extras.overridable_config_cli(configs)
+    cfg = tyro.cli(Config)
     cfg.adjust_steps(cfg.steps_scaler)
-    print(f"training on {cfg.data_dir}")
+    # This will just enable default pruning strategy
     main(cfg)

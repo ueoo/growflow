@@ -37,10 +37,9 @@ class Runner:
         self.now = now
         checkpoint_path = (cfg.dynamic_ckpt or cfg.static_ckpt or [None])[0]
         if cfg.result_dir == "":  # if result_dir exists, just use it
+            # Assume the checkpoints are always contained in the ckpts folder.
             if checkpoint_path:
-                cfg.result_dir = checkpoint_path.split("/ckpts/")[
-                    0
-                ]  # Assume the checkpoints are always contained in the ckpts folder.
+                cfg.result_dir = checkpoint_path.split("/ckpts/")[0]
 
             else:
                 # Where to dump results.
@@ -59,7 +58,7 @@ class Runner:
                     if option in cfg.data_dir:
                         scene = option
                         break
-                cfg.result_dir = f"./results/{scene}/{unique_str}_{now}"
+                cfg.result_dir = f"/scr/yuegao/grow_flow_results/{scene}"
                 os.makedirs(f"{cfg.result_dir}", exist_ok=True)
                 # Setup output directories.
 

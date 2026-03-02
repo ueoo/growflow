@@ -43,7 +43,7 @@ class Config:
     ## Neural ODE splatting config
     # Path to the dataset
     # data_dir: str = "./data/dynamic/blender/360/multi-view/31_views/rose_transparent_final_small_vase_70_timesteps"
-    data_dir: str = "/scr/yuegao/Reconstruction_dataset_growflow/Rosemore50kfullTest_Rosemore_050016"
+    data_dir: str = ""
 
     # whether to training and testing for static reconstruction.
     combine_train_test: bool = False

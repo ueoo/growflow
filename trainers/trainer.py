@@ -25,6 +25,7 @@ from datasets.sampler import (
 from helpers.criterions import psnr as _psnr
 from helpers.gsplat_utils import (
     create_dataloader_during_prog,
+    get_raster_params_blender,
     pers_proj_means,
     prepare_times,
     reset_adam_states,
@@ -1089,11 +1090,17 @@ class Trainer(BaseEngine):
             if cfg.learn_masks or cfg.use_bounding_box:
                 if cfg.learn_masks:  # only use learn masks, bounding box makes no sense tbh...
                     assert "masks" in self.gaussians.splats, "need to have trained 3D masks to use this"
-                    print("3D masks detected, using them")
+                    print("+++++++++++++++3D masks detected, using them")
                     masks_ind = torch.sigmoid(self.gaussians.splats["masks"])
                     bounding_box_mask = (masks_ind > cfg.mask_threshold).squeeze()
                 elif cfg.use_bounding_box:
                     means_t0 = self.gaussians.splats.means
+                    box_center = None
+                    dimensions = None
+                    box_center = [0.0, 0.0, 0.0]
+                    dimensions = (1.0, 1.0, 1.0)
+                    rotation_angles = (0, 0, 0)
+
                     if "clematis" in cfg.data_dir:
                         box_center = [0.015, 0.000, 1.678]
                         dimensions = (0.350, 0.3, 0.5)
@@ -1135,9 +1142,15 @@ class Trainer(BaseEngine):
                         dimensions = (0.3, 0.3, 0.6)
                         rotation_angles = (0, 0, 0)
 
-                    _, bounding_box_mask = select_points_in_prism(
-                        means_t0.detach(), box_center, dimensions, rotation_angles=rotation_angles
-                    )
+                    if box_center is None or dimensions is None:
+                        print(
+                            "No predefined bounding-box preset found for this scene; " "falling back to all gaussians."
+                        )
+                        bounding_box_mask = torch.ones(means_t0.shape[0], dtype=bool)
+                    else:
+                        _, bounding_box_mask = select_points_in_prism(
+                            means_t0.detach(), box_center, dimensions, rotation_angles=rotation_angles
+                        )
                 num_gauss_ode = bounding_box_mask.sum()
                 print(f"out of {bounding_box_mask.shape[0]} gaussians, we train with {num_gauss_ode} gaussians")
 
@@ -1159,11 +1172,8 @@ class Trainer(BaseEngine):
                 # trainloader_iter = create_dataloader_during_prog(trainset=self.trainset, lst_of_prog_indices=lst_of_prog_indices, shuffle_ind=cfg.shuffle_ind, temp_batch_size=temp_batch_size)
 
             # removal code
-            for (
-                ts_idx
-            ) in (
-                active_timesteps.copy()
-            ):  # at each iteration, check if any timestep reaches the desirec number of iterations
+            for ts_idx in active_timesteps.copy():
+                # at each iteration, check if any timestep reaches the desirec number of iterations
                 if timestep_counter[ts_idx] == desired_num_steps[ts_idx]:  # sometimes u might have allocated more
                     print(
                         f"timestep {ts_idx} has reached maximum number of allocated iterations {(desired_num_steps[ts_idx])} freezing now "
@@ -1195,8 +1205,11 @@ class Trainer(BaseEngine):
                         )
 
                         os.makedirs(f"{cfg.result_dir}/fixed_pc_traj_{len(cont_times)}", exist_ok=True)
+                        # Save step-2 outputs with iter-0 naming so all artifacts align with test_*_it0.mp4.
+                        save_step = 0
                         np.save(
-                            f"{cfg.result_dir}/fixed_pc_traj_{len(cont_times)}/full_traj_{step}.npy", full_trajectory
+                            f"{cfg.result_dir}/fixed_pc_traj_{len(cont_times)}/full_traj_{save_step}.npy",
+                            full_trajectory,
                         )
                         # Visualize what the trajectory looks like
                         debug_raster_params = {}
@@ -1209,7 +1222,7 @@ class Trainer(BaseEngine):
                             psnr_ours_dict = self.visualize_fixed_pc_traj_captured(
                                 full_trajectory,
                                 debug_raster_params,
-                                step,
+                                save_step,
                                 cfg,
                                 path=f"{cfg.result_dir}",
                             )
@@ -1217,10 +1230,16 @@ class Trainer(BaseEngine):
                             psnr_ours_dict = self.visualize_fixed_pc_traj(
                                 full_trajectory,
                                 debug_raster_params,
-                                step,
+                                save_step,
                                 cfg,
                                 path=f"{cfg.result_dir}/fixed_pc_traj_{len(cont_times)}",
                             )
+                            # self.render_fixed_pc_traj_all_views(
+                            #     full_trajectory,
+                            #     save_step,
+                            #     cfg,
+                            #     path=f"{cfg.result_dir}/fixed_pc_traj_{len(cont_times)}",
+                            # )
                         # print(f"psnr for the fixed trajectory is {psnr_ours_dict}")
                         print("generation done")
                         exit(1)
@@ -1517,7 +1536,14 @@ class Trainer(BaseEngine):
 
         scene = cfg.data_dir.split("/")[-1]
         means_t0 = self.gaussians.splats.means
-        if "clematis" in cfg.data_dir:
+        box_center = None
+        dimensions = None
+        rotation_angles = (0, 0, 0)
+        if "blenderflowers" in cfg.data_dir.lower():
+            box_center = [0.0, 0.0, 0.0]
+            dimensions = (1.0, 1.0, 1.0)
+            rotation_angles = (0, 0, 0)
+        elif "clematis" in cfg.data_dir:
             box_center = [0.015, 0.000, 1.678]
             dimensions = (0.350, 0.3, 0.5)
             rotation_angles = (0, 0, 0)
@@ -1554,9 +1580,13 @@ class Trainer(BaseEngine):
             dimensions = (0.3, 0.3, 0.4)
             rotation_angles = (0, 0, 0)
 
-        _, bounding_box_mask = select_points_in_prism(
-            means_t0.detach(), box_center, dimensions, rotation_angles=rotation_angles
-        )
+        if box_center is None or dimensions is None:
+            print("No predefined bbox for this scene; using all gaussians.")
+            bounding_box_mask = torch.ones(means_t0.shape[0], dtype=bool)
+        else:
+            _, bounding_box_mask = select_points_in_prism(
+                means_t0.detach(), box_center, dimensions, rotation_angles=rotation_angles
+            )
 
         num_gauss_ode = bounding_box_mask.sum()
 
@@ -1850,7 +1880,8 @@ class Trainer(BaseEngine):
 
         # Save the averaged PSNR data
         regular_psnr_ours_dict = dict(psnr_ours_dict)
-        with open("my_data.json", "w") as f:
+        psnr_ours_dict_path = f"{path}/{split}_psnr_it{step}.json"
+        with open(psnr_ours_dict_path, "w") as f:
             json.dump(regular_psnr_ours_dict, f)
 
         # Also save the timestep-wise data separately
@@ -1948,7 +1979,7 @@ class Trainer(BaseEngine):
         T, N, F = fixed_trajectory.shape
         all_indices = list(range(0, T))
         psnr_ours_dict = defaultdict(list)
-        c2ws_all, gt_images_all, inp_t_all = self.trainset.getfirstcam(all_indices)
+        c2ws_all, gt_images_all, inp_t_all = self.testset.getfirstcam(all_indices)
         # inp_t_all = torch.tensor([0., 0.1], device="cuda")
         first_cam_gt_image = gt_images_all[0]
         debug_raster_params["viewmats"] = c2ws_all.cuda()  # we replace here since we need to use the test cameras.
@@ -2002,8 +2033,134 @@ class Trainer(BaseEngine):
             canvas,
             fps=canvas.shape[0] / self.cfg.video_duration,
         )
+        # Also export white-background and RGBA outputs for the same camera/timesteps.
+        render_params_black = dict(debug_raster_params)
+        render_params_black["backgrounds"] = torch.zeros((1, 3), device="cuda", dtype=torch.float32)
+        black_colors, _ = self.gaussians.rasterize_with_dynamic_params_batched(
+            fixed_trajectory, render_params_black, activate_params=True
+        )
+        black_colors = torch.clamp(black_colors.squeeze(), 0, 1).cpu()
+
+        render_params_white = dict(debug_raster_params)
+        render_params_white["backgrounds"] = torch.ones((1, 3), device="cuda", dtype=torch.float32)
+        white_colors, _ = self.gaussians.rasterize_with_dynamic_params_batched(
+            fixed_trajectory, render_params_white, activate_params=True
+        )
+        white_colors = torch.clamp(white_colors.squeeze(), 0, 1).cpu()
+
+        alpha_rgb = 1.0 - (white_colors - black_colors)
+        alpha = torch.clamp(alpha_rgb.mean(dim=-1, keepdim=True), 0.0, 1.0)
+        alpha_safe = torch.clamp(alpha, min=1e-6)
+        fg = torch.clamp(black_colors / alpha_safe, 0.0, 1.0)
+        fg = torch.where(alpha > 1e-6, fg, torch.zeros_like(fg))
+        rgba_frames = torch.cat([fg, alpha], dim=-1)
+
+        # Save per-frame PNGs from the exact same tensors used to build the MP4.
+        # This keeps frame quality/appearance aligned with the historical gt+out video logic.
+        frame_root = os.path.join(dynamic_test_path, f"test_{first_camera_indx}_it{step}_frames")
+        gt_frame_root = os.path.join(frame_root, "gt")
+        out_frame_root = os.path.join(frame_root, "out")
+        concat_frame_root = os.path.join(frame_root, "concat")
+        # white_frame_root = os.path.join(frame_root, "white")
+        # rgba_frame_root = os.path.join(frame_root, "rgba")
+        os.makedirs(gt_frame_root, exist_ok=True)
+        os.makedirs(out_frame_root, exist_ok=True)
+        os.makedirs(concat_frame_root, exist_ok=True)
+        # os.makedirs(white_frame_root, exist_ok=True)
+        # os.makedirs(rgba_frame_root, exist_ok=True)
+
+        gt_frames = (first_cam_gt_image[..., :3].cpu().numpy() * 255).astype(np.uint8)
+        out_frames = (first_img_ours.cpu().numpy() * 255).astype(np.uint8)
+        # white_frames = (white_colors.numpy() * 255).astype(np.uint8)
+        # rgba_frames = (rgba_frames.numpy() * 255).astype(np.uint8)
+        for t in range(T):
+            imageio.imwrite(os.path.join(gt_frame_root, f"{t:05d}.png"), gt_frames[t])
+            imageio.imwrite(os.path.join(out_frame_root, f"{t:05d}.png"), out_frames[t])
+            imageio.imwrite(os.path.join(concat_frame_root, f"{t:05d}.png"), canvas[t])
+            # imageio.imwrite(os.path.join(white_frame_root, f"{t:05d}.png"), white_frames[t])
+            # imageio.imwrite(os.path.join(rgba_frame_root, f"{t:05d}.png"), rgba_frames[t])
+
+        # imageio.mimwrite(
+        #     f"{dynamic_test_path}/test_white_{first_camera_indx}_it{step}.mp4",
+        #     white_frames,
+        #     fps=canvas.shape[0] / self.cfg.video_duration,
+        # )
+
         del colors, canvas
         return psnr_ours_dict
+
+    # @torch.no_grad()
+    # def render_fixed_pc_traj_all_views(self, fixed_trajectory, step, cfg, path="mixed_init_training"):
+    #     """
+    #     Render fixed trajectory for all test views with black/white/RGBA outputs.
+    #     Saves per-frame PNGs in the fixed_pc_traj folder.
+    #     """
+    #     if cfg.data_type != "blender":
+    #         print("render_fixed_pc_traj_all_views currently supports blender only, skipping.")
+    #         return
+
+    #     os.makedirs(path, exist_ok=True)
+    #     fixed_trajectory_torch = torch.from_numpy(fixed_trajectory).to("cuda")
+    #     num_timesteps = fixed_trajectory_torch.shape[0]
+    #     int_t = list(range(num_timesteps))
+
+    #     c2ws, _, _, _, _ = self.testset.__getitems__(int_t)
+    #     c2ws = c2ws.to("cuda")
+    #     num_cameras = c2ws.shape[0]
+
+    #     raster_params = get_raster_params_blender(
+    #         cfg, self.gaussians.splats, self.testset, self.gaussians.deformed_params_dict
+    #     )
+    #     raster_params["viewmats"] = c2ws
+    #     raster_params["Ks"] = raster_params["Ks"].expand(num_cameras, -1, -1).to(torch.float32)
+
+    #     raster_params_black = dict(raster_params)
+    #     raster_params_black["backgrounds"] = torch.zeros((num_cameras, 3), device="cuda", dtype=torch.float32)
+    #     out_black, _ = self.gaussians.rasterize_with_dynamic_params_batched(
+    #         fixed_trajectory_torch, raster_params_black, activate_params=True
+    #     )
+    #     out_black = torch.clamp(out_black, 0.0, 1.0)  # (C,T,H,W,3)
+
+    #     raster_params_white = dict(raster_params)
+    #     raster_params_white["backgrounds"] = torch.ones((num_cameras, 3), device="cuda", dtype=torch.float32)
+    #     out_white, _ = self.gaussians.rasterize_with_dynamic_params_batched(
+    #         fixed_trajectory_torch, raster_params_white, activate_params=True
+    #     )
+    #     out_white = torch.clamp(out_white, 0.0, 1.0)  # (C,T,H,W,3)
+
+    #     alpha_rgb = 1.0 - (out_white - out_black)
+    #     alpha = torch.clamp(alpha_rgb.mean(dim=-1, keepdim=True), 0.0, 1.0)  # (C,T,H,W,1)
+    #     alpha_safe = torch.clamp(alpha, min=1e-6)
+    #     fg = torch.clamp(out_black / alpha_safe, 0.0, 1.0)
+    #     fg = torch.where(alpha > 1e-6, fg, torch.zeros_like(fg))
+    #     rgba = torch.cat([fg, alpha], dim=-1)  # (C,T,H,W,4)
+
+    #     black_root = os.path.join(path, f"test_black_it{step}")
+    #     white_root = os.path.join(path, f"test_white_it{step}")
+    #     rgba_root = os.path.join(path, f"test_rgba_it{step}")
+    #     os.makedirs(black_root, exist_ok=True)
+    #     os.makedirs(white_root, exist_ok=True)
+    #     os.makedirs(rgba_root, exist_ok=True)
+
+    #     all_test_camera_ids = list(self.testset[0]["image_id"])
+    #     for cam_i, cam_id in enumerate(all_test_camera_ids):
+    #         cam_black = os.path.join(black_root, str(cam_id))
+    #         cam_white = os.path.join(white_root, str(cam_id))
+    #         cam_rgba = os.path.join(rgba_root, str(cam_id))
+    #         os.makedirs(cam_black, exist_ok=True)
+    #         os.makedirs(cam_white, exist_ok=True)
+    #         os.makedirs(cam_rgba, exist_ok=True)
+
+    #         for t in range(num_timesteps):
+    #             img_black = (out_black[cam_i, t].cpu().numpy() * 255).astype(np.uint8)
+    #             img_white = (out_white[cam_i, t].cpu().numpy() * 255).astype(np.uint8)
+    #             img_rgba = (rgba[cam_i, t].cpu().numpy() * 255).astype(np.uint8)
+
+    #             imageio.imwrite(os.path.join(cam_black, f"{t:05d}.png"), img_black)
+    #             imageio.imwrite(os.path.join(cam_white, f"{t:05d}.png"), img_white)
+    #             imageio.imwrite(os.path.join(cam_rgba, f"{t:05d}.png"), img_rgba)
+
+    #     print(f"[done] step2 full-view renders saved to {path}")
 
     @torch.no_grad()
     def visualize_renderings_masked(
@@ -2067,7 +2224,8 @@ class Trainer(BaseEngine):
 
             # saving our own psnr list so we can re-use it
             regular_psnr_ours_dict = dict(psnr_ours_dict)
-            with open("my_data.json", "w") as f:
+            psnr_ours_dict_path = f"{path}/{split}_psnr_it{step}.json"
+            with open(psnr_ours_dict_path, "w") as f:
                 json.dump(regular_psnr_ours_dict, f)
             # 3. Visualize PSNR over time on same graph
             fig, ax = plt.subplots(figsize=(12, 8))
